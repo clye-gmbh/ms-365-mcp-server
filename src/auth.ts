@@ -333,42 +333,60 @@ class AuthManager {
     return accounts[0];
   }
 
-  async acquireTokenByDeviceCode(hack?: (message: string) => void): Promise<string | null> {
-    const deviceCodeRequest = {
-      scopes: this.scopes,
-      deviceCodeCallback: (response: { message: string }) => {
-        const text = ['\n', response.message, '\n'].join('');
-        if (hack) {
-          hack(text + 'After login run the "verify login" command');
-        } else {
-          console.log(text);
-        }
-        logger.info('Device code login initiated');
-      },
-    };
+  async acquireTokenByDeviceCode(hack?: (code: string) => void): Promise<string> {
+    return new Promise<string>((resolve, reject) => {
+      const deviceCodeRequest = {
+        scopes: this.scopes,
+        deviceCodeCallback: (response: { message: string }) => {
+          // Extract device code from the message Microsoft provides, e.g.:
+          // "To sign in, use a web browser to open the page https://microsoft.com/devicelogin
+          //  and enter the code ABC12345 to authenticate."
+          const codeMatch = response.message.match(/code\s+([A-Z0-9]+)\b/i);
+          const code = codeMatch?.[1] ?? '';
 
-    try {
+          if (code) {
+            if (hack) {
+              hack(code);
+            } else {
+              const text = ['\n', response.message, '\n'].join('');
+              console.log(text);
+            }
+            logger.info('Device code login initiated');
+            resolve(code);
+          } else {
+            const error = new Error('Failed to extract device code from response');
+            logger.error(error.message);
+            reject(error);
+          }
+        },
+      };
+
+      // Start authentication in background - don't wait for it
+      this.msalApp
+        .acquireTokenByDeviceCode(deviceCodeRequest)
+        .then((response) => {
+          logger.info(`Granted scopes: ${response?.scopes?.join(', ') || 'none'}`);
+          logger.info('Device code login successful');
+          this.accessToken = response?.accessToken || null;
+          this.tokenExpiry = response?.expiresOn ? new Date(response.expiresOn).getTime() : null;
+
+          // Set the newly authenticated account as selected if no account is currently selected
+          if (!this.selectedAccountId && response?.account) {
+            this.selectedAccountId = response.account.homeAccountId;
+            this.saveSelectedAccount();
+            logger.info(`Auto-selected new account: ${response.account.username}`);
+          }
+
+          this.saveTokenCache();
+        })
+        .catch((error) => {
+          logger.error(`Error in device code flow: ${(error as Error).message}`);
+          // Don't reject the promise here - code was already returned
+        });
+
       logger.info('Requesting device code...');
       logger.info(`Requesting scopes: ${this.scopes.join(', ')}`);
-      const response = await this.msalApp.acquireTokenByDeviceCode(deviceCodeRequest);
-      logger.info(`Granted scopes: ${response?.scopes?.join(', ') || 'none'}`);
-      logger.info('Device code login successful');
-      this.accessToken = response?.accessToken || null;
-      this.tokenExpiry = response?.expiresOn ? new Date(response.expiresOn).getTime() : null;
-
-      // Set the newly authenticated account as selected if no account is currently selected
-      if (!this.selectedAccountId && response?.account) {
-        this.selectedAccountId = response.account.homeAccountId;
-        await this.saveSelectedAccount();
-        logger.info(`Auto-selected new account: ${response.account.username}`);
-      }
-
-      await this.saveTokenCache();
-      return this.accessToken;
-    } catch (error) {
-      logger.error(`Error in device code flow: ${(error as Error).message}`);
-      throw error;
-    }
+    });
   }
 
   async testLogin(): Promise<LoginTestResult> {

@@ -27,17 +27,15 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
             };
           }
         }
+        const code = await authManager.acquireTokenByDeviceCode();
 
-        const text = await new Promise<string>((resolve, reject) => {
-          authManager.acquireTokenByDeviceCode(resolve).catch(reject);
-        });
         return {
           content: [
             {
               type: 'text',
               text: JSON.stringify({
-                error: 'device_code_required',
-                message: text.trim(),
+                url: 'https://microsoft.com/devicelogin',
+                code,
               }),
             },
           ],
