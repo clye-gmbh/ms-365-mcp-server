@@ -3,7 +3,7 @@ import logger from './logger.js';
 import GraphClient from './graph-client.js';
 import { api } from './generated/client.js';
 import { z } from 'zod';
-import { readFileSync } from 'fs';
+import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { TOOL_CATEGORIES } from './tool-categories.js';
@@ -421,6 +421,123 @@ export function registerGraphTools(
       logger.error(`Failed to register tool ${tool.alias}: ${(error as Error).message}`);
       failedCount++;
     }
+  }
+
+  // Register a custom convenience tool to download file content to the MCP server filesystem
+  try {
+    const downloadParamSchema = {
+      driveId: z
+        .string()
+        .describe('Drive ID of the OneDrive or SharePoint document library containing the file'),
+      driveItemId: z
+        .string()
+        .describe('Item ID of the file to download (from list-folder-files or similar tools)'),
+      localPath: z
+        .string()
+        .describe(
+          'Relative path under the server download directory where the file will be saved (e.g., "downloads/Ticket.pdf").'
+        ),
+      overwrite: z
+        .boolean()
+        .describe('Overwrite existing file if it already exists at the target path (default: false)')
+        .optional(),
+    };
+
+    server.tool(
+      'download-file-to-local',
+      'Download a OneDrive or SharePoint file to the MCP server filesystem. WARNING: files are stored on the MCP server host, not on the MCP client.',
+      downloadParamSchema,
+      {
+        title: 'download-file-to-local',
+        readOnlyHint: false,
+      },
+      async ({ driveId, driveItemId, localPath, overwrite = false }) => {
+        try {
+          const baseDir =
+            process.env.MS365_MCP_DOWNLOAD_DIR || path.resolve(process.cwd(), 'downloads');
+          const resolvedBase = path.resolve(baseDir);
+          const targetPath = path.resolve(resolvedBase, localPath);
+
+          // Prevent path traversal outside of the base directory
+          if (!targetPath.startsWith(resolvedBase)) {
+            const message = `Invalid localPath: resolved path escapes download base directory (${resolvedBase}).`;
+            logger.warn(message);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ error: message }),
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          if (!overwrite && existsSync(targetPath)) {
+            const message = `File already exists at ${targetPath}. Set overwrite=true to replace it.`;
+            logger.warn(message);
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify({ error: message }),
+                },
+              ],
+              isError: true,
+            };
+          }
+
+          mkdirSync(path.dirname(targetPath), { recursive: true });
+
+          const endpoint = `/drives/${encodeURIComponent(
+            driveId
+          )}/items/${encodeURIComponent(driveItemId)}/content`;
+          logger.info(
+            `Downloading file content for driveId=${driveId}, driveItemId=${driveItemId} to ${targetPath}`
+          );
+
+          const buffer = await graphClient.downloadBinary(endpoint, { method: 'GET' });
+          writeFileSync(targetPath, buffer);
+
+          const result = {
+            success: true,
+            savedAs: targetPath,
+            size: buffer.length,
+            driveId,
+            driveItemId,
+            baseDir: resolvedBase,
+          };
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (error) {
+          const message = `Failed to download file to local path: ${(error as Error).message}`;
+          logger.error(message);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ error: message }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    registeredCount++;
+  } catch (error) {
+    logger.error(
+      `Failed to register custom tool download-file-to-local: ${(error as Error).message}`
+    );
+    failedCount++;
   }
 
   logger.info(

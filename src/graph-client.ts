@@ -13,6 +13,7 @@ interface GraphRequestOptions {
   accessToken?: string;
   refreshToken?: string;
 
+  // Additional custom flags can be added here as needed
   [key: string]: unknown;
 }
 
@@ -121,6 +122,64 @@ class GraphClient {
       return result;
     } catch (error) {
       logger.error('Microsoft Graph API request failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Download raw binary content from a Microsoft Graph endpoint.
+   * This is primarily used for file content (e.g. /content endpoints) where we
+   * want to persist the data on disk instead of parsing it as JSON.
+   */
+  async downloadBinary(endpoint: string, options: GraphRequestOptions = {}): Promise<Buffer> {
+    // Use OAuth tokens if available, otherwise fall back to authManager
+    let accessToken =
+      options.accessToken || this.accessToken || (await this.authManager.getToken());
+    let refreshToken = options.refreshToken || this.refreshToken;
+
+    if (!accessToken) {
+      throw new Error('No access token available');
+    }
+
+    try {
+      let response = await this.performRequest(endpoint, accessToken, options);
+
+      if (response.status === 401 && refreshToken) {
+        // Token expired, try to refresh
+        await this.refreshAccessToken(refreshToken);
+
+        // Update token for retry
+        accessToken = this.accessToken || accessToken;
+        if (!accessToken) {
+          throw new Error('Failed to refresh access token');
+        }
+
+        // Retry the request with new token
+        response = await this.performRequest(endpoint, accessToken, options);
+      }
+
+      if (response.status === 403) {
+        const errorText = await response.text();
+        if (errorText.includes('scope') || errorText.includes('permission')) {
+          throw new Error(
+            `Microsoft Graph API scope error: ${response.status} ${response.statusText} - ${errorText}. This tool requires organization mode. Please restart with --org-mode flag.`
+          );
+        }
+        throw new Error(
+          `Microsoft Graph API error: ${response.status} ${response.statusText} - ${errorText}`
+        );
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          `Microsoft Graph API error: ${response.status} ${response.statusText} - ${await response.text()}`
+        );
+      }
+
+      const arrayBuffer = await response.arrayBuffer();
+      return Buffer.from(arrayBuffer);
+    } catch (error) {
+      logger.error('Microsoft Graph API binary download failed:', error);
       throw error;
     }
   }
