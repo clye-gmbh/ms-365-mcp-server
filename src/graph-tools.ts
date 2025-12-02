@@ -321,6 +321,313 @@ async function executeGraphTool(
   }
 }
 
+interface SharePointDriveInfo {
+  driveId: string;
+  driveName: string;
+  rootItemId: string;
+}
+
+interface SharePointFileNode {
+  siteId: string;
+  driveId: string;
+  driveItemId: string;
+  name: string;
+  webUrl?: string;
+  size?: number;
+  isFolder: boolean;
+  mimeType?: string;
+  createdDateTime?: string;
+  lastModifiedDateTime?: string;
+  path: string;
+  children?: SharePointFileNode[];
+}
+
+interface ListSharePointSiteFilesOptions {
+  siteId: string;
+  driveId?: string;
+  driveName?: string;
+  structure: 'flat' | 'tree';
+  includeFolders?: boolean;
+  maxDepth?: number;
+  filter?: string;
+  pageSize?: number;
+}
+
+async function resolveSiteDrive(
+  graphClient: GraphClient,
+  siteId: string,
+  driveId?: string,
+  driveName?: string
+): Promise<SharePointDriveInfo> {
+  const endpoint = `/sites/${encodeURIComponent(siteId)}/drives`;
+  logger.info(`Resolving SharePoint drives for siteId=${siteId}`);
+
+  const result = (await graphClient.makeRequest(endpoint, {
+    method: 'GET',
+  })) as { value?: Array<{ id?: string; name?: string; root?: { id?: string } }> };
+
+  const drives = result?.value || [];
+  if (!Array.isArray(drives) || drives.length === 0) {
+    throw new Error(`No document libraries (drives) found for siteId=${siteId}`);
+  }
+
+  const normalize = (value: string | undefined | null): string =>
+    (value || '').trim().toLowerCase();
+
+  let selected =
+    (driveId && drives.find((d) => d.id && normalize(d.id) === normalize(driveId))) ||
+    (driveName && drives.find((d) => d.name && normalize(d.name) === normalize(driveName)));
+
+  if (!selected) {
+    // Prefer common default library names, otherwise fall back to the first drive
+    const preferredNames = ['dokumente', 'documents', 'shared documents'];
+    selected = drives.find((d) => preferredNames.includes(normalize(d.name))) || drives[0];
+  }
+
+  if (!selected?.id) {
+    throw new Error(`Failed to resolve drive for siteId=${siteId} (missing drive id)`);
+  }
+
+  let rootItemId = selected.root?.id;
+
+  // Fallback: some responses from /sites/{site-id}/drives may not include root.id.
+  // In that case, fetch the root driveItem explicitly.
+  if (!rootItemId) {
+    const driveRootEndpoint = `/drives/${encodeURIComponent(selected.id)}/root`;
+    logger.info(
+      `No root.id on drive from /sites/{site-id}/drives, fetching root from ${driveRootEndpoint}`
+    );
+    const driveRoot = (await graphClient.makeRequest(driveRootEndpoint, {
+      method: 'GET',
+    })) as { id?: string };
+
+    if (!driveRoot?.id) {
+      throw new Error(
+        `Failed to resolve drive root item for siteId=${siteId}, driveId=${selected.id} (missing root id)`
+      );
+    }
+
+    rootItemId = driveRoot.id;
+  }
+
+  return {
+    driveId: selected.id,
+    driveName: selected.name || selected.id,
+    rootItemId,
+  };
+}
+
+async function listDriveItemChildren(
+  graphClient: GraphClient,
+  driveId: string,
+  driveItemId: string,
+  pageSize?: number
+): Promise<any[]> {
+  const items: any[] = [];
+  let endpoint = `/drives/${encodeURIComponent(
+    driveId
+  )}/items/${encodeURIComponent(driveItemId)}/children`;
+
+  if (pageSize && pageSize > 0) {
+    endpoint = `${endpoint}?$top=${pageSize}`;
+  }
+
+  // Follow @odata.nextLink if present
+  // We use makeRequest directly to get the raw JSON result
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    logger.info(`Listing children for driveId=${driveId}, driveItemId=${driveItemId}: ${endpoint}`);
+    const response = (await graphClient.makeRequest(endpoint, {
+      method: 'GET',
+    })) as {
+      value?: any[];
+      '@odata.nextLink'?: string;
+    };
+
+    const pageItems = response?.value || [];
+    if (Array.isArray(pageItems) && pageItems.length > 0) {
+      items.push(...pageItems);
+    }
+
+    const nextLink = response && (response as any)['@odata.nextLink'];
+    if (!nextLink || typeof nextLink !== 'string') {
+      break;
+    }
+
+    try {
+      const url = new URL(nextLink);
+      endpoint = url.pathname.replace('/v1.0', '') + url.search;
+    } catch {
+      logger.warn(`Invalid @odata.nextLink encountered, stopping pagination: ${nextLink}`);
+      break;
+    }
+  }
+
+  return items;
+}
+
+function matchesFilter(name: string | undefined, filter?: string): boolean {
+  if (!filter) return true;
+  if (!name) return false;
+
+  const loweredName = name.toLowerCase();
+  const loweredFilter = filter.toLowerCase();
+
+  // Support simple "*.ext" patterns and substring matches
+  if (loweredFilter.startsWith('*.') && loweredFilter.length > 2) {
+    const ext = loweredFilter.slice(1); // keep the dot
+    return loweredName.endsWith(ext);
+  }
+
+  if (loweredFilter.includes('*')) {
+    // Treat * as wildcard, escape other regex chars
+    const escaped = loweredFilter.replace(/[-/\\^$+?.()|[\]{}]/g, '\\$&').replace(/\*/g, '.*');
+    const regex = new RegExp(`^${escaped}$`, 'i');
+    return regex.test(name);
+  }
+
+  return loweredName.includes(loweredFilter);
+}
+
+async function collectSharePointFiles(
+  graphClient: GraphClient,
+  options: ListSharePointSiteFilesOptions
+): Promise<
+  | {
+      structure: 'flat';
+      items: SharePointFileNode[];
+      driveId: string;
+      driveName: string;
+      siteId: string;
+      truncated: boolean;
+    }
+  | {
+      structure: 'tree';
+      root: SharePointFileNode;
+      driveId: string;
+      driveName: string;
+      siteId: string;
+      truncated: boolean;
+    }
+> {
+  const {
+    siteId,
+    driveId,
+    driveName,
+    structure,
+    includeFolders = false,
+    maxDepth = 10,
+    filter,
+    pageSize,
+  } = options;
+
+  const SAFE_MAX_DEPTH = 20;
+  const effectiveMaxDepth = Math.min(maxDepth, SAFE_MAX_DEPTH);
+
+  const driveInfo = await resolveSiteDrive(graphClient, siteId, driveId, driveName);
+  logger.info(
+    `Resolved SharePoint drive for siteId=${siteId}: driveId=${driveInfo.driveId}, driveName=${driveInfo.driveName}, rootItemId=${driveInfo.rootItemId}`
+  );
+
+  const flatItems: SharePointFileNode[] = [];
+  let truncated = false;
+
+  const walk = async (
+    currentItemId: string,
+    currentPath: string,
+    depth: number
+  ): Promise<SharePointFileNode> => {
+    const children = await listDriveItemChildren(
+      graphClient,
+      driveInfo.driveId,
+      currentItemId,
+      pageSize
+    );
+
+    const node: SharePointFileNode = {
+      siteId,
+      driveId: driveInfo.driveId,
+      driveItemId: currentItemId,
+      name: depth === 0 ? driveInfo.driveName : currentPath.split('/').pop() || '',
+      isFolder: true,
+      path: currentPath || '/',
+      webUrl: undefined,
+      size: undefined,
+    };
+
+    const childNodes: SharePointFileNode[] = [];
+
+    for (const item of children) {
+      const isFolder = !!item.folder;
+      const name: string = item.name || '';
+      const childPath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+
+      const baseNode: SharePointFileNode = {
+        siteId,
+        driveId: driveInfo.driveId,
+        driveItemId: item.id || '',
+        name,
+        webUrl: item.webUrl,
+        size: typeof item.size === 'number' ? item.size : undefined,
+        isFolder,
+        mimeType: item.file?.mimeType,
+        createdDateTime: item.createdDateTime || item.fileSystemInfo?.createdDateTime,
+        lastModifiedDateTime:
+          item.lastModifiedDateTime || item.fileSystemInfo?.lastModifiedDateTime,
+        path: childPath,
+      };
+
+      if (!isFolder && matchesFilter(name, filter)) {
+        flatItems.push(baseNode);
+      } else if (isFolder) {
+        if (includeFolders && matchesFilter(name, filter)) {
+          flatItems.push(baseNode);
+        }
+      }
+
+      if (isFolder) {
+        if (depth < effectiveMaxDepth) {
+          const childNode = await walk(item.id, childPath, depth + 1);
+          childNodes.push(childNode);
+        } else {
+          truncated = true;
+        }
+      } else if (structure === 'tree') {
+        childNodes.push(baseNode);
+      }
+    }
+
+    if (structure === 'tree') {
+      node.children = childNodes;
+    }
+
+    return node;
+  };
+
+  const rootPath = '/';
+  const rootNode = await walk(driveInfo.rootItemId, rootPath, 0);
+
+  if (structure === 'flat') {
+    return {
+      structure: 'flat',
+      driveId: driveInfo.driveId,
+      driveName: driveInfo.driveName,
+      siteId,
+      items: flatItems,
+      truncated,
+    };
+  }
+
+  return {
+    structure: 'tree',
+    driveId: driveInfo.driveId,
+    driveName: driveInfo.driveName,
+    siteId,
+    root: rootNode,
+    truncated,
+  };
+}
+
 export function registerGraphTools(
   server: McpServer,
   graphClient: GraphClient,
@@ -423,6 +730,138 @@ export function registerGraphTools(
     }
   }
 
+  // Register a custom tool to list all files in a SharePoint site document library
+  try {
+    const sharePointParamSchema = {
+      siteId: z
+        .string()
+        .describe(
+          'SharePoint site ID (Graph site-id) containing the document libraries whose files should be listed'
+        ),
+      driveId: z
+        .string()
+        .describe(
+          'Optional: specific drive ID (document library) within the site. If omitted, a default library is selected.'
+        )
+        .optional(),
+      driveName: z
+        .string()
+        .describe(
+          'Optional: name of the document library (e.g., "Dokumente", "Documents"). Used if driveId is not provided.'
+        )
+        .optional(),
+      structure: z
+        .enum(['flat', 'tree'])
+        .describe(
+          'Output structure: "flat" returns a flat list of files, "tree" returns a folder/file hierarchy.'
+        ),
+      includeFolders: z
+        .boolean()
+        .describe(
+          'When true and structure="flat", include folders in the result list in addition to files.'
+        )
+        .optional(),
+      maxDepth: z
+        .number()
+        .describe(
+          'Maximum folder depth to traverse starting from the library root (default: 10, hard limit: 20).'
+        )
+        .optional(),
+      filter: z
+        .string()
+        .describe(
+          'Optional name filter. Supports simple patterns like "*.pdf" or substring matches (case-insensitive).'
+        )
+        .optional(),
+      pageSize: z
+        .number()
+        .describe(
+          'Optional page size for Graph paging ($top) when listing folder children. Larger libraries may require multiple pages.'
+        )
+        .optional(),
+    };
+
+    server.tool(
+      'list-sharepoint-site-files',
+      'List all files in a SharePoint site document library starting from the library root. This convenience tool automatically looks up the site drives and recursively walks the folder hierarchy so you do not need to call list-sharepoint-site-drives or list-folder-files manually.',
+      sharePointParamSchema,
+      {
+        title: 'list-sharepoint-site-files',
+        readOnlyHint: true,
+      },
+      async (params) => {
+        try {
+          const {
+            siteId,
+            driveId,
+            driveName,
+            structure,
+            includeFolders,
+            maxDepth,
+            filter,
+            pageSize,
+          } = params as {
+            siteId: string;
+            driveId?: string;
+            driveName?: string;
+            structure: 'flat' | 'tree';
+            includeFolders?: boolean;
+            maxDepth?: number;
+            filter?: string;
+            pageSize?: number;
+          };
+
+          const data = await collectSharePointFiles(graphClient, {
+            siteId,
+            driveId,
+            driveName,
+            structure,
+            includeFolders,
+            maxDepth,
+            filter,
+            pageSize,
+          });
+
+          const result = {
+            siteId: data.siteId,
+            driveId: data.driveId,
+            driveName: data.driveName,
+            structure: data.structure,
+            payload: data,
+          };
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+          };
+        } catch (error) {
+          const message = `Failed to list SharePoint site files: ${(error as Error).message}`;
+          logger.error(message);
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({ error: message }),
+              },
+            ],
+            isError: true,
+          };
+        }
+      }
+    );
+
+    registeredCount++;
+  } catch (error) {
+    logger.error(
+      `Failed to register custom tool list-sharepoint-site-files: ${(error as Error).message}`
+    );
+    failedCount++;
+  }
+
   // Register a custom convenience tool to download file content to the MCP server filesystem
   try {
     const downloadParamSchema = {
@@ -439,7 +878,9 @@ export function registerGraphTools(
         ),
       overwrite: z
         .boolean()
-        .describe('Overwrite existing file if it already exists at the target path (default: false)')
+        .describe(
+          'Overwrite existing file if it already exists at the target path (default: false)'
+        )
         .optional(),
     };
 
