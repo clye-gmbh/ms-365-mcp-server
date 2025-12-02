@@ -154,3 +154,4 @@ CLAUDE.md
 
 # MCP configuration (contains sensitive keys)
 .mcp.json
+downloads/123.pdf
