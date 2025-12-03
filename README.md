@@ -26,6 +26,7 @@ The easiest way to use this package is with `npx`, which will automatically down
    - Copy the token
 
 2. **Configure npm to use GitHub Packages**:
+
    ```bash
    # Create or edit ~/.npmrc
    echo "@clye-gmbh:registry=https://npm.pkg.github.com" >> ~/.npmrc
@@ -52,6 +53,7 @@ npm install @clye-gmbh/ms-365-mcp-server
 ```
 
 Then run it:
+
 ```bash
 # If installed globally
 ms-365-mcp-server
@@ -485,6 +487,7 @@ This package is published to GitHub Packages. To publish a new version:
    - The workflow will build, test, and publish the package
 
 The build process includes:
+
 - Installing dependencies (`npm ci`)
 - Generating Graph API client code (`npm run generate`)
 - Building the TypeScript code (`npm run build`)

@@ -295,9 +295,7 @@ class GraphClient {
           responseData.data !== undefined ? responseData.data : { success: true }
         );
         return {
-          content: [
-            { type: 'text', text: this.serializeData(structured, this.outputFormat) },
-          ],
+          content: [{ type: 'text', text: this.serializeData(structured, this.outputFormat) }],
           _meta: meta,
           structuredContent: structured,
         };
@@ -306,9 +304,7 @@ class GraphClient {
       if (responseData.data === null || responseData.data === undefined) {
         const structured: Record<string, unknown> = { success: true };
         return {
-          content: [
-            { type: 'text', text: this.serializeData(structured, this.outputFormat) },
-          ],
+          content: [{ type: 'text', text: this.serializeData(structured, this.outputFormat) }],
           _meta: meta,
           structuredContent: structured,
         };
@@ -331,9 +327,7 @@ class GraphClient {
       removeODataProps(structured);
 
       return {
-        content: [
-          { type: 'text', text: this.serializeData(structured, this.outputFormat, true) },
-        ],
+        content: [{ type: 'text', text: this.serializeData(structured, this.outputFormat, true) }],
         _meta: meta,
         structuredContent: structured,
       };
