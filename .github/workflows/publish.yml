@@ -56,7 +56,13 @@ jobs:
 
       - name: Update package.json version
         run: |
-          npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          if [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
+            npm version $NEW_VERSION --no-git-tag-version
+          else
+            echo "Version already set to $NEW_VERSION, skipping update"
+          fi
 
       - name: Publish to GitHub Packages
         run: npm publish
