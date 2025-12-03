@@ -27,6 +27,9 @@ jobs:
                   registry-url: "https://npm.pkg.github.com"
                   scope: "@clye-gmbh"
 
+            - name: Install patch-package (if needed)
+              run: npm i -D patch-package
+
             - name: Install dependencies
               run: npm ci
 
