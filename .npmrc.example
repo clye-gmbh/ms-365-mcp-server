@@ -1,0 +1,12 @@
+# GitHub Packages configuration
+# Copy this file to .npmrc and configure your GitHub token
+# 
+# To use packages from GitHub Packages, add:
+@softeria:registry=https://npm.pkg.github.com
+//npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
+
+# To publish, you need a GitHub Personal Access Token with 'write:packages' permission
+# Create one at: https://github.com/settings/tokens
+# Then set it as an environment variable:
+# export GITHUB_TOKEN=your_token_here
+

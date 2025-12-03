@@ -12,6 +12,79 @@ API.
 - Node.js >= 20 (recommended)
 - Node.js 14+ may work with dependency warnings
 
+## Installation
+
+### Using npx (Recommended)
+
+The easiest way to use this package is with `npx`, which will automatically download and run the latest version:
+
+```bash
+npx @softeria/ms-365-mcp-server
+```
+
+For GitHub Packages (if published there), you'll need to configure npm to authenticate:
+
+1. **Create a GitHub Personal Access Token** with `read:packages` permission:
+   - Go to https://github.com/settings/tokens
+   - Generate a new token (classic) with `read:packages` scope
+
+2. **Configure npm to use GitHub Packages**:
+   ```bash
+   # Create or edit ~/.npmrc
+   echo "@softeria:registry=https://npm.pkg.github.com" >> ~/.npmrc
+   echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> ~/.npmrc
+   ```
+
+3. **Use with npx**:
+   ```bash
+   npx @softeria/ms-365-mcp-server
+   ```
+
+### Installing Locally
+
+If you prefer to install the package globally or locally:
+
+```bash
+# Install from GitHub Packages
+npm install -g @softeria/ms-365-mcp-server
+
+# Or install locally in your project
+npm install @softeria/ms-365-mcp-server
+```
+
+Then run it:
+```bash
+# If installed globally
+ms-365-mcp-server
+
+# If installed locally
+npx ms-365-mcp-server
+# or
+node_modules/.bin/ms-365-mcp-server
+```
+
+### Building from Source
+
+To build and use from source:
+
+```bash
+# Clone the repository
+git clone https://github.com/softeria/ms-365-mcp-server.git
+cd ms-365-mcp-server
+
+# Install dependencies
+npm install
+
+# Generate Graph API client code
+npm run generate
+
+# Build the package
+npm run build
+
+# Run the built package
+node dist/index.js
+```
+
 ## Features
 
 - Authentication via Microsoft Authentication Library (MSAL)
@@ -202,6 +275,8 @@ Edit the config file under Settings > Developer:
   }
 }
 ```
+
+**Note**: If using GitHub Packages, make sure you've configured npm authentication (see [Installation](#installation) section above).
 
 ### Claude Code CLI
 
@@ -395,6 +470,27 @@ Environment variables:
 - `MS365_MCP_CLIENT_ID`: Custom Azure app client ID (defaults to built-in app)
 - `MS365_MCP_TENANT_ID`: Custom tenant ID (defaults to 'common' for multi-tenant)
 - `MS365_MCP_OAUTH_TOKEN`: Pre-existing OAuth token for Microsoft Graph API (BYOT method)
+
+## Publishing
+
+This package is published to GitHub Packages. To publish a new version:
+
+1. **Create a GitHub Release**:
+   - Go to https://github.com/softeria/ms-365-mcp-server/releases/new
+   - Create a new release with a tag (e.g., `v1.0.0`)
+   - The GitHub Actions workflow will automatically build and publish the package
+
+2. **Or use workflow_dispatch**:
+   - Go to Actions → Build and Publish → Run workflow
+   - Enter the version number (e.g., `1.0.0`)
+   - The workflow will build, test, and publish the package
+
+The build process includes:
+- Installing dependencies (`npm ci`)
+- Generating Graph API client code (`npm run generate`)
+- Building the TypeScript code (`npm run build`)
+- Running tests (`npm test`)
+- Publishing to GitHub Packages (`npm publish`)
 
 ## Contributing
 
