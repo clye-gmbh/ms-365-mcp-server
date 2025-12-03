@@ -28,6 +28,12 @@ interface McpResponse {
   content: ContentItem[];
   _meta?: Record<string, unknown>;
   isError?: boolean;
+  /**
+   * Structured (already parsed) representation of the main payload.
+   * This is added in addition to the textual content to make it
+   * easier for LLMs / clients to consume the data.
+   */
+  structuredContent?: Record<string, unknown>;
 
   [key: string]: unknown;
 }
@@ -242,18 +248,29 @@ class GraphClient {
       return this.formatJsonResponse(result, options.rawResponse, options.excludeResponse);
     } catch (error) {
       logger.error(`Error in Graph API request: ${error}`);
+      const structuredError: Record<string, unknown> = { error: (error as Error).message };
       return {
-        content: [{ type: 'text', text: JSON.stringify({ error: (error as Error).message }) }],
+        content: [{ type: 'text', text: JSON.stringify(structuredError) }],
         isError: true,
+        structuredContent: structuredError,
       };
     }
   }
 
   formatJsonResponse(data: unknown, rawResponse = false, excludeResponse = false): McpResponse {
+    const makeStructured = (value: unknown): Record<string, unknown> => {
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return value as Record<string, unknown>;
+      }
+      return { value };
+    };
+
     // If excludeResponse is true, only return success indication
     if (excludeResponse) {
+      const structured: Record<string, unknown> = { success: true };
       return {
-        content: [{ type: 'text', text: this.serializeData({ success: true }, this.outputFormat) }],
+        content: [{ type: 'text', text: this.serializeData(structured, this.outputFormat) }],
+        structuredContent: structured,
       };
     }
 
@@ -274,20 +291,26 @@ class GraphClient {
       }
 
       if (rawResponse) {
+        const structured = makeStructured(
+          responseData.data !== undefined ? responseData.data : { success: true }
+        );
         return {
           content: [
-            { type: 'text', text: this.serializeData(responseData.data, this.outputFormat) },
+            { type: 'text', text: this.serializeData(structured, this.outputFormat) },
           ],
           _meta: meta,
+          structuredContent: structured,
         };
       }
 
       if (responseData.data === null || responseData.data === undefined) {
+        const structured: Record<string, unknown> = { success: true };
         return {
           content: [
-            { type: 'text', text: this.serializeData({ success: true }, this.outputFormat) },
+            { type: 'text', text: this.serializeData(structured, this.outputFormat) },
           ],
           _meta: meta,
+          structuredContent: structured,
         };
       }
 
@@ -304,26 +327,32 @@ class GraphClient {
         }
       };
 
-      removeODataProps(responseData.data as Record<string, unknown>);
+      const structured = makeStructured(responseData.data);
+      removeODataProps(structured);
 
       return {
         content: [
-          { type: 'text', text: this.serializeData(responseData.data, this.outputFormat, true) },
+          { type: 'text', text: this.serializeData(structured, this.outputFormat, true) },
         ],
         _meta: meta,
+        structuredContent: structured,
       };
     }
 
     // Original handling for backward compatibility
     if (rawResponse) {
+      const structured = makeStructured(data !== undefined ? data : { success: true });
       return {
-        content: [{ type: 'text', text: this.serializeData(data, this.outputFormat) }],
+        content: [{ type: 'text', text: this.serializeData(structured, this.outputFormat) }],
+        structuredContent: structured,
       };
     }
 
     if (data === null || data === undefined) {
+      const structured: Record<string, unknown> = { success: true };
       return {
-        content: [{ type: 'text', text: this.serializeData({ success: true }, this.outputFormat) }],
+        content: [{ type: 'text', text: this.serializeData(structured, this.outputFormat) }],
+        structuredContent: structured,
       };
     }
 
@@ -340,10 +369,12 @@ class GraphClient {
       }
     };
 
-    removeODataProps(data as Record<string, unknown>);
+    const structured = makeStructured(data);
+    removeODataProps(structured);
 
     return {
-      content: [{ type: 'text', text: this.serializeData(data, this.outputFormat, true) }],
+      content: [{ type: 'text', text: this.serializeData(structured, this.outputFormat, true) }],
+      structuredContent: structured,
     };
   }
 }

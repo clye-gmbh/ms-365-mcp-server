@@ -76,6 +76,7 @@ interface CallToolResult {
   content: ContentItem[];
   _meta?: Record<string, unknown>;
   isError?: boolean;
+  structuredContent?: Record<string, unknown>;
 
   [key: string]: unknown;
 }
@@ -294,29 +295,22 @@ async function executeGraphTool(
       }
     }
 
-    // Convert McpResponse to CallToolResult with the correct structure
-    const content: ContentItem[] = response.content.map((item) => ({
-      type: 'text' as const,
-      text: item.text,
-    }));
-
-    return {
-      content,
-      _meta: response._meta,
-      isError: response.isError,
-    };
+    // Pass through the full MCP response, including structuredContent if present
+    return response as unknown as CallToolResult;
   } catch (error) {
     logger.error(`Error in tool ${tool.alias}: ${(error as Error).message}`);
+    const structuredError: Record<string, unknown> = {
+      error: `Error in tool ${tool.alias}: ${(error as Error).message}`,
+    };
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify({
-            error: `Error in tool ${tool.alias}: ${(error as Error).message}`,
-          }),
+          text: JSON.stringify(structuredError),
         },
       ],
       isError: true,
+      structuredContent: structuredError,
     };
   }
 }
@@ -837,18 +831,21 @@ export function registerGraphTools(
                 text: JSON.stringify(result, null, 2),
               },
             ],
+            structuredContent: result as Record<string, unknown>,
           };
         } catch (error) {
           const message = `Failed to list SharePoint site files: ${(error as Error).message}`;
           logger.error(message);
+          const structuredError: Record<string, unknown> = { error: message };
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({ error: message }),
+                text: JSON.stringify(structuredError),
               },
             ],
             isError: true,
+            structuredContent: structuredError,
           };
         }
       }
@@ -903,28 +900,32 @@ export function registerGraphTools(
           if (!targetPath.startsWith(resolvedBase)) {
             const message = `Invalid localPath: resolved path escapes download base directory (${resolvedBase}).`;
             logger.warn(message);
+            const structuredError: Record<string, unknown> = { error: message };
             return {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify({ error: message }),
+                  text: JSON.stringify(structuredError),
                 },
               ],
               isError: true,
+              structuredContent: structuredError,
             };
           }
 
           if (!overwrite && existsSync(targetPath)) {
             const message = `File already exists at ${targetPath}. Set overwrite=true to replace it.`;
             logger.warn(message);
+            const structuredError: Record<string, unknown> = { error: message };
             return {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify({ error: message }),
+                  text: JSON.stringify(structuredError),
                 },
               ],
               isError: true,
+              structuredContent: structuredError,
             };
           }
 
@@ -940,7 +941,7 @@ export function registerGraphTools(
           const buffer = await graphClient.downloadBinary(endpoint, { method: 'GET' });
           writeFileSync(targetPath, buffer);
 
-          const result = {
+          const result: Record<string, unknown> = {
             success: true,
             savedAs: targetPath,
             size: buffer.length,
@@ -956,18 +957,21 @@ export function registerGraphTools(
                 text: JSON.stringify(result, null, 2),
               },
             ],
+            structuredContent: result,
           };
         } catch (error) {
           const message = `Failed to download file to local path: ${(error as Error).message}`;
           logger.error(message);
+          const structuredError = { error: message };
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({ error: message }),
+                text: JSON.stringify(structuredError),
               },
             ],
             isError: true,
+            structuredContent: structuredError,
           };
         }
       }
@@ -1077,22 +1081,21 @@ export function registerDiscoveryTools(
         if (results.length >= maxLimit) break;
       }
 
+      const structured: Record<string, unknown> = {
+        found: results.length,
+        total: toolsRegistry.size,
+        tools: results,
+        tip: 'Use execute-tool with the tool name and required parameters to call any of these tools.',
+      };
+
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify(
-              {
-                found: results.length,
-                total: toolsRegistry.size,
-                tools: results,
-                tip: 'Use execute-tool with the tool name and required parameters to call any of these tools.',
-              },
-              null,
-              2
-            ),
+            text: JSON.stringify(structured, null, 2),
           },
         ],
+        structuredContent: structured,
       };
     }
   );
@@ -1114,17 +1117,19 @@ export function registerDiscoveryTools(
     async ({ tool_name, parameters = {} }) => {
       const toolData = toolsRegistry.get(tool_name);
       if (!toolData) {
+        const structuredError: Record<string, unknown> = {
+          error: `Tool not found: ${tool_name}`,
+          tip: 'Use search-tools to find available tools.',
+        };
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({
-                error: `Tool not found: ${tool_name}`,
-                tip: 'Use search-tools to find available tools.',
-              }),
+              text: JSON.stringify(structuredError),
             },
           ],
           isError: true,
+          structuredContent: structuredError,
         };
       }
 

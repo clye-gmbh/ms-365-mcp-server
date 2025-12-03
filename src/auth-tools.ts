@@ -14,40 +14,49 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
         if (!force) {
           const loginStatus = await authManager.testLogin();
           if (loginStatus.success) {
+            const structured: Record<string, unknown> = {
+              status: 'Already logged in',
+              ...loginStatus,
+            };
             return {
               content: [
                 {
                   type: 'text',
-                  text: JSON.stringify({
-                    status: 'Already logged in',
-                    ...loginStatus,
-                  }),
+                  text: JSON.stringify(structured),
                 },
               ],
+              structuredContent: structured,
             };
           }
         }
         const code = await authManager.acquireTokenByDeviceCode();
 
+        const structured: Record<string, unknown> = {
+          url: 'https://microsoft.com/devicelogin',
+          code,
+        };
+
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({
-                url: 'https://microsoft.com/devicelogin',
-                code,
-              }),
+              text: JSON.stringify(structured),
             },
           ],
+          structuredContent: structured,
         };
       } catch (error) {
+        const structured: Record<string, unknown> = {
+          error: `Authentication failed: ${(error as Error).message}`,
+        };
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({ error: `Authentication failed: ${(error as Error).message}` }),
+              text: JSON.stringify(structured),
             },
           ],
+          structuredContent: structured,
         };
       }
     }
@@ -56,22 +65,26 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
   server.tool('logout', 'Log out from Microsoft account', {}, async () => {
     try {
       await authManager.logout();
+      const structured: Record<string, unknown> = { message: 'Logged out successfully' };
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ message: 'Logged out successfully' }),
+            text: JSON.stringify(structured),
           },
         ],
+        structuredContent: structured,
       };
     } catch {
+      const structured: Record<string, unknown> = { error: 'Logout failed' };
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ error: 'Logout failed' }),
+            text: JSON.stringify(structured),
           },
         ],
+        structuredContent: structured,
       };
     }
   });
@@ -79,13 +92,16 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
   server.tool('verify-login', 'Check current Microsoft authentication status', {}, async () => {
     const testResult = await authManager.testLogin();
 
+    const structured: Record<string, unknown> = { ...testResult };
+
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify(testResult),
+          text: JSON.stringify(structured),
         },
       ],
+      structuredContent: structured,
     };
   });
 
@@ -100,22 +116,29 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
         selected: account.homeAccountId === selectedAccountId,
       }));
 
+      const structured: Record<string, unknown> = { accounts: result };
+
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ accounts: result }),
+            text: JSON.stringify(structured),
           },
         ],
+        structuredContent: structured,
       };
     } catch (error) {
+      const structured = {
+        error: `Failed to list accounts: ${(error as Error).message}`,
+      };
       return {
         content: [
           {
             type: 'text',
-            text: JSON.stringify({ error: `Failed to list accounts: ${(error as Error).message}` }),
+            text: JSON.stringify(structured),
           },
         ],
+        structuredContent: structured,
       };
     }
   });
@@ -130,34 +153,42 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
       try {
         const success = await authManager.selectAccount(accountId);
         if (success) {
+          const structured: Record<string, unknown> = { message: `Selected account: ${accountId}` };
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({ message: `Selected account: ${accountId}` }),
+                text: JSON.stringify(structured),
               },
             ],
+            structuredContent: structured,
           };
         } else {
+          const structured: Record<string, unknown> = {
+            error: `Account not found: ${accountId}`,
+          };
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({ error: `Account not found: ${accountId}` }),
+                text: JSON.stringify(structured),
               },
             ],
+            structuredContent: structured,
           };
         }
       } catch (error) {
+        const structured: Record<string, unknown> = {
+          error: `Failed to select account: ${(error as Error).message}`,
+        };
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({
-                error: `Failed to select account: ${(error as Error).message}`,
-              }),
+              text: JSON.stringify(structured),
             },
           ],
+          structuredContent: structured,
         };
       }
     }
@@ -173,34 +204,44 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
       try {
         const success = await authManager.removeAccount(accountId);
         if (success) {
+          const structured: Record<string, unknown> = {
+            message: `Removed account: ${accountId}`,
+          };
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({ message: `Removed account: ${accountId}` }),
+                text: JSON.stringify(structured),
               },
             ],
+            structuredContent: structured,
           };
         } else {
+          const structured: Record<string, unknown> = {
+            error: `Account not found: ${accountId}`,
+          };
           return {
             content: [
               {
                 type: 'text',
-                text: JSON.stringify({ error: `Account not found: ${accountId}` }),
+                text: JSON.stringify(structured),
               },
             ],
+            structuredContent: structured,
           };
         }
       } catch (error) {
+        const structured: Record<string, unknown> = {
+          error: `Failed to remove account: ${(error as Error).message}`,
+        };
         return {
           content: [
             {
               type: 'text',
-              text: JSON.stringify({
-                error: `Failed to remove account: ${(error as Error).message}`,
-              }),
+              text: JSON.stringify(structured),
             },
           ],
+          structuredContent: structured,
         };
       }
     }
