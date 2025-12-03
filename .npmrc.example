@@ -2,7 +2,7 @@
 # Copy this file to .npmrc and configure your GitHub token
 # 
 # To use packages from GitHub Packages, add:
-@softeria:registry=https://npm.pkg.github.com
+@clye-gmbh:registry=https://npm.pkg.github.com
 //npm.pkg.github.com/:_authToken=${GITHUB_TOKEN}
 
 # To publish, you need a GitHub Personal Access Token with 'write:packages' permission
