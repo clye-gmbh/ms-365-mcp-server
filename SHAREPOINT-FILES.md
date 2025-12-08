@@ -49,7 +49,7 @@ Um an konkrete Datei-IDs zu kommen, arbeitest du auf Ebene der Drives.
 - **Tool**: `list-folder-files`
 - **Parameter**:
   - `driveId`: die `id` des Drives aus Schritt 3
-  - `driveItemId`: die ID des Ordners, dessen Inhalt du sehen willst  
+  - `driveItemId`: die ID des Ordners, dessen Inhalt du sehen willst
     - Für den **Root-Ordner** kannst du zuvor den Drive über passende Tools abfragen, oder du verwendest eine dir bereits bekannte Root-`id`.
 
 **Beispiel (Ordner-Inhalt):**
@@ -85,8 +85,8 @@ Diese `id` verwendest du anschließend z. B. für:
 
 ### 3. Kurz-Zusammenfassung
 
-- **Ausgangspunkt**: vorhandene `site-id` der SharePoint-Site  
-- **Drives der Site**: `list-sharepoint-site-drives` → `driveId`  
+- **Ausgangspunkt**: vorhandene `site-id` der SharePoint-Site
+- **Drives der Site**: `list-sharepoint-site-drives` → `driveId`
 - **Dateien/Folders**: `list-folder-files` (mit `driveId` + `driveItemId`) → `id` pro Datei
 
 ---
@@ -100,7 +100,7 @@ Es übernimmt:
 - die Auswahl einer Dokumentbibliothek (optional gesteuert über `driveId` oder `driveName`)
 - und das rekursive Durchlaufen der Ordnerstruktur (`list-folder-files`), bis zu einer definierten Tiefe.
 
-**Tool-Name**: `list-sharepoint-site-files`  
+**Tool-Name**: `list-sharepoint-site-files`
 
 **Parameter (wichtigste):**
 
@@ -153,6 +153,3 @@ Die Antwort enthält u. a.:
 - `structure: "tree"`
 - `payload.root` – Root-Knoten der Bibliothek
 - `payload.root.children[]` – rekursiver Baum aus Ordnern und Dateien
-
-
-

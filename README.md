@@ -1,6 +1,6 @@
 # ms-365-mcp-server
 
-[![npm version](https://img.shields.io/npm/v/@softeria/ms-365-mcp-server.svg)](https://www.npmjs.com/package/@softeria/ms-365-mcp-server) [![build status](https://github.com/softeria/ms-365-mcp-server/actions/workflows/build.yml/badge.svg)](https://github.com/softeria/ms-365-mcp-server/actions/workflows/build.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/softeria/ms-365-mcp-server/blob/main/LICENSE)
+[![npm version](https://img.shields.io/npm/v/@clye-gmbh/ms-365-mcp-server.svg)](https://www.npmjs.com/package/@clye-gmbh/ms-365-mcp-server) [![build status](https://github.com/clye-gmbh/ms-365-mcp-server/actions/workflows/build.yml/badge.svg)](https://github.com/clye-gmbh/ms-365-mcp-server/actions/workflows/build.yml) [![license](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/clye-gmbh/ms-365-mcp-server/blob/main/LICENSE)
 
 Microsoft 365 MCP Server
 
@@ -16,29 +16,29 @@ API.
 
 ### Using npx (Recommended)
 
-The easiest way to use this package is with `npx`, which will automatically download and run the latest version:
+The easiest way to use this package is with `npx`, which will automatically download and run the latest version.
 
-```bash
-npx @softeria/ms-365-mcp-server
-```
-
-For GitHub Packages (if published there), you'll need to configure npm to authenticate:
+**Note**: Even though the package is public, GitHub Packages requires authentication to install packages. You'll need to configure npm:
 
 1. **Create a GitHub Personal Access Token** with `read:packages` permission:
    - Go to https://github.com/settings/tokens
    - Generate a new token (classic) with `read:packages` scope
+   - Copy the token
 
 2. **Configure npm to use GitHub Packages**:
+
    ```bash
    # Create or edit ~/.npmrc
-   echo "@softeria:registry=https://npm.pkg.github.com" >> ~/.npmrc
+   echo "@clye-gmbh:registry=https://npm.pkg.github.com" >> ~/.npmrc
    echo "//npm.pkg.github.com/:_authToken=YOUR_GITHUB_TOKEN" >> ~/.npmrc
    ```
 
 3. **Use with npx**:
    ```bash
-   npx @softeria/ms-365-mcp-server
+   npx @clye-gmbh/ms-365-mcp-server
    ```
+
+> **Why authentication for public packages?** GitHub Packages requires authentication even for public packages. This is a GitHub policy, not specific to this package.
 
 ### Installing Locally
 
@@ -46,13 +46,14 @@ If you prefer to install the package globally or locally:
 
 ```bash
 # Install from GitHub Packages
-npm install -g @softeria/ms-365-mcp-server
+npm install -g @clye-gmbh/ms-365-mcp-server
 
 # Or install locally in your project
-npm install @softeria/ms-365-mcp-server
+npm install @clye-gmbh/ms-365-mcp-server
 ```
 
 Then run it:
+
 ```bash
 # If installed globally
 ms-365-mcp-server
@@ -69,7 +70,7 @@ To build and use from source:
 
 ```bash
 # Clone the repository
-git clone https://github.com/softeria/ms-365-mcp-server.git
+git clone https://github.com/clye-gmbh/ms-365-mcp-server.git
 cd ms-365-mcp-server
 
 # Install dependencies
@@ -134,7 +135,7 @@ value[1]{id,displayName,mail,jobTitle}:
 Via CLI flag:
 
 ```bash
-npx @softeria/ms-365-mcp-server --toon
+npx @clye-gmbh/ms-365-mcp-server --toon
 ```
 
 Via Claude Desktop configuration:
@@ -144,7 +145,7 @@ Via Claude Desktop configuration:
   "mcpServers": {
     "ms365": {
       "command": "npx",
-      "args": ["-y", "@softeria/ms-365-mcp-server", "--toon"]
+      "args": ["-y", "@clye-gmbh/ms-365-mcp-server", "--toon"]
     }
   }
 }
@@ -153,7 +154,7 @@ Via Claude Desktop configuration:
 Via environment variable:
 
 ```bash
-MS365_MCP_OUTPUT_FORMAT=toon npx @softeria/ms-365-mcp-server
+MS365_MCP_OUTPUT_FORMAT=toon npx @clye-gmbh/ms-365-mcp-server
 ```
 
 ## Supported Services & Tools
@@ -224,7 +225,7 @@ To access work/school features (Teams, SharePoint, etc.), enable organization mo
   "mcpServers": {
     "ms365": {
       "command": "npx",
-      "args": ["-y", "@softeria/ms-365-mcp-server", "--org-mode"]
+      "args": ["-y", "@clye-gmbh/ms-365-mcp-server", "--org-mode"]
     }
   }
 }
@@ -270,7 +271,7 @@ Edit the config file under Settings > Developer:
   "mcpServers": {
     "ms365": {
       "command": "npx",
-      "args": ["-y", "@softeria/ms-365-mcp-server"]
+      "args": ["-y", "@clye-gmbh/ms-365-mcp-server"]
     }
   }
 }
@@ -281,7 +282,7 @@ Edit the config file under Settings > Developer:
 ### Claude Code CLI
 
 ```bash
-claude mcp add ms365 -- npx -y @softeria/ms-365-mcp-server
+claude mcp add ms365 -- npx -y @clye-gmbh/ms-365-mcp-server
 ```
 
 For other interfaces that support MCPs, please refer to their respective documentation for the correct
@@ -327,7 +328,7 @@ For interactive authentication via device code:
   - Use `verify-login` tool to confirm
 - **CLI login**:
   ```bash
-  npx @softeria/ms-365-mcp-server --login
+  npx @clye-gmbh/ms-365-mcp-server --login
   ```
   Follow the URL and code prompt in the terminal.
 
@@ -338,7 +339,7 @@ Tokens are cached securely in your OS credential store (fallback to file).
 When running with `--http`, the server **requires** OAuth authentication:
 
 ```bash
-npx @softeria/ms-365-mcp-server --http 3000
+npx @clye-gmbh/ms-365-mcp-server --http 3000
 ```
 
 This mode:
@@ -401,7 +402,7 @@ If you are running ms-365-mcp-server as part of a larger system that manages Mic
 provide an access token directly to this MCP server:
 
 ```bash
-MS365_MCP_OAUTH_TOKEN=your_oauth_token npx @softeria/ms-365-mcp-server
+MS365_MCP_OAUTH_TOKEN=your_oauth_token npx @clye-gmbh/ms-365-mcp-server
 ```
 
 This method:
@@ -420,8 +421,8 @@ This method:
 To reduce initial connection overhead, use preset tool categories instead of loading all 90+ tools:
 
 ```bash
-npx @softeria/ms-365-mcp-server --preset mail
-npx @softeria/ms-365-mcp-server --list-presets  # See all available presets
+npx @clye-gmbh/ms-365-mcp-server --preset mail
+npx @clye-gmbh/ms-365-mcp-server --list-presets  # See all available presets
 ```
 
 Available presets: `mail`, `calendar`, `files`, `personal`, `work`, `excel`, `contacts`, `tasks`, `onenote`, `search`, `users`, `all`
@@ -476,7 +477,7 @@ Environment variables:
 This package is published to GitHub Packages. To publish a new version:
 
 1. **Create a GitHub Release**:
-   - Go to https://github.com/softeria/ms-365-mcp-server/releases/new
+   - Go to https://github.com/clye-gmbh/ms-365-mcp-server/releases/new
    - Create a new release with a tag (e.g., `v1.0.0`)
    - The GitHub Actions workflow will automatically build and publish the package
 
@@ -486,6 +487,7 @@ This package is published to GitHub Packages. To publish a new version:
    - The workflow will build, test, and publish the package
 
 The build process includes:
+
 - Installing dependencies (`npm ci`)
 - Generating Graph API client code (`npm run generate`)
 - Building the TypeScript code (`npm run build`)
@@ -514,8 +516,8 @@ npm run generate
 
 If you're having problems or need help:
 
-- Create an [issue](https://github.com/softeria/ms-365-mcp-server/issues)
-- Start a [discussion](https://github.com/softeria/ms-365-mcp-server/discussions)
+- Create an [issue](https://github.com/clye-gmbh/ms-365-mcp-server/issues)
+- Start a [discussion](https://github.com/clye-gmbh/ms-365-mcp-server/discussions)
 - Email: eirikb@eirikb.no
 - Discord: https://discord.gg/WvGVNScrAZ or @eirikb
 

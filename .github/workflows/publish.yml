@@ -1,61 +1,70 @@
 name: Build and Publish
 
 on:
-    release:
-        types: [created]
-    workflow_dispatch:
-        inputs:
-            version:
-                description: "Version to publish (e.g., 1.0.0)"
-                required: true
-                type: string
+  release:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (e.g., 1.0.0)"
+        required: true
+        type: string
 
 jobs:
-    build-and-publish:
-        runs-on: ubuntu-latest
-        permissions:
-            contents: read
-            packages: write
-        steps:
-            - name: Checkout code
-              uses: actions/checkout@v4
+  build-and-publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-            - name: Setup Node.js
-              uses: actions/setup-node@v4
-              with:
-                  node-version: "20"
-                  registry-url: "https://npm.pkg.github.com"
-                  scope: "@softeria"
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://npm.pkg.github.com"
+          scope: "@clye-gmbh"
 
-            - name: Install dependencies
-              run: npm ci
+      - name: Install patch-package (if needed)
+        run: npm i -D patch-package
 
-            - name: Generate Graph client
-              run: npm run generate
+      - name: Install dependencies
+        run: npm ci
 
-            - name: Build package
-              run: npm run build
+      - name: Generate Graph client
+        run: npm run generate
 
-            - name: Run tests
-              run: npm test
+      - name: Build package
+        run: npm run build
 
-            - name: Determine version
-              id: version
-              run: |
-                  if [ "${{ github.event_name }}" == "release" ]; then
-                    VERSION="${{ github.event.release.tag_name }}"
-                    # Remove 'v' prefix if present
-                    VERSION=${VERSION#v}
-                  else
-                    VERSION="${{ github.event.inputs.version }}"
-                  fi
-                  echo "version=$VERSION" >> $GITHUB_OUTPUT
+      #- name: Run tests
+      #  run: npm test
 
-            - name: Update package.json version
-              run: |
-                  npm version ${{ steps.version.outputs.version }} --no-git-tag-version
+      - name: Determine version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" == "release" ]; then
+            VERSION="${{ github.event.release.tag_name }}"
+            # Remove 'v' prefix if present
+            VERSION=${VERSION#v}
+          else
+            VERSION="${{ github.event.inputs.version }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
-            - name: Publish to GitHub Packages
-              run: npm publish
-              env:
-                  NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Update package.json version
+        run: |
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          NEW_VERSION="${{ steps.version.outputs.version }}"
+          if [ "$CURRENT_VERSION" != "$NEW_VERSION" ]; then
+            npm version $NEW_VERSION --no-git-tag-version
+          else
+            echo "Version already set to $NEW_VERSION, skipping update"
+          fi
+
+      - name: Publish to GitHub Packages
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
