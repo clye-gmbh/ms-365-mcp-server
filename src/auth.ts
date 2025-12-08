@@ -4,6 +4,7 @@ import logger from './logger.js';
 import fs, { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { getClientCredentialsAccessToken } from './lib/microsoft-auth.js';
 
 // Ok so this is a hack to lazily import keytar only when needed
 // since --http mode may not need it at all, and keytar can be a pain to install (looking at you alpine)
@@ -143,6 +144,9 @@ class AuthManager {
   private tokenExpiry: number | null;
   private oauthToken: string | null;
   private isOAuthMode: boolean;
+  private isClientCredentialsMode: boolean;
+  private clientCredentialsAccessToken: string | null;
+  private clientCredentialsExpiry: number | null;
   private selectedAccountId: string | null;
 
   constructor(
@@ -155,11 +159,19 @@ class AuthManager {
     this.msalApp = new PublicClientApplication(this.config);
     this.accessToken = null;
     this.tokenExpiry = null;
+    this.clientCredentialsAccessToken = null;
+    this.clientCredentialsExpiry = null;
     this.selectedAccountId = null;
 
     const oauthTokenFromEnv = process.env.MS365_MCP_OAUTH_TOKEN;
     this.oauthToken = oauthTokenFromEnv ?? null;
     this.isOAuthMode = oauthTokenFromEnv != null;
+
+    // Client credentials mode: use application permissions with client ID/secret
+    // Enabled explicitly via MS365_MCP_AUTH_MODE=client_credentials to avoid
+    // interfering with existing interactive/OAuth flows.
+    const authMode = process.env.MS365_MCP_AUTH_MODE;
+    this.isClientCredentialsMode = !this.isOAuthMode && authMode === 'client_credentials';
   }
 
   async loadTokenCache(): Promise<void> {
@@ -279,10 +291,52 @@ class AuthManager {
   }
 
   async getToken(forceRefresh = false): Promise<string | null> {
+    // 1) Explicit OAuth/BYOT mode: token provided by environment or HTTP OAuth flow
     if (this.isOAuthMode && this.oauthToken) {
       return this.oauthToken;
     }
 
+    // 2) Client credentials (app-only) mode using client ID + secret
+    if (this.isClientCredentialsMode) {
+      const now = Date.now();
+
+      if (
+        !forceRefresh &&
+        this.clientCredentialsAccessToken &&
+        this.clientCredentialsExpiry &&
+        this.clientCredentialsExpiry > now + 60_000 // 60s safety margin
+      ) {
+        return this.clientCredentialsAccessToken;
+      }
+
+      const tenantId = process.env.MS365_MCP_TENANT_ID || 'common';
+      const clientId = process.env.MS365_MCP_CLIENT_ID || DEFAULT_CONFIG.auth!.clientId!;
+      const clientSecret = process.env.MS365_MCP_CLIENT_SECRET;
+
+      if (!clientSecret) {
+        throw new Error('MS365_MCP_CLIENT_SECRET not configured for client credentials mode');
+      }
+
+      const scopeOverride = process.env.MS365_MCP_CLIENT_CREDENTIALS_SCOPE;
+
+      const tokenResponse = await getClientCredentialsAccessToken(
+        clientId,
+        clientSecret,
+        tenantId,
+        scopeOverride
+      );
+
+      this.clientCredentialsAccessToken = tokenResponse.access_token;
+      this.clientCredentialsExpiry = now + tokenResponse.expires_in * 1000;
+
+      logger.info(
+        `Acquired client credentials access token (expires in ${tokenResponse.expires_in}s)`
+      );
+
+      return this.clientCredentialsAccessToken;
+    }
+
+    // 3) Interactive/device code flow using MSAL and token cache
     if (this.accessToken && this.tokenExpiry && this.tokenExpiry > Date.now() && !forceRefresh) {
       return this.accessToken;
     }
@@ -405,31 +459,47 @@ class AuthManager {
       logger.info('Token retrieved successfully, testing Graph API access...');
 
       try {
-        const response = await fetch('https://graph.microsoft.com/v1.0/me', {
+        // In client credentials (app-only) mode, /me is not available.
+        // Instead, test access by calling a SharePoint sites endpoint.
+        const testEndpoint = this.isClientCredentialsMode
+          ? 'https://graph.microsoft.com/v1.0/sites?top=1'
+          : 'https://graph.microsoft.com/v1.0/me';
+
+        const response = await fetch(testEndpoint, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
         });
 
         if (response.ok) {
-          const userData = await response.json();
-          logger.info('Graph API user data fetch successful');
+          // For delegated/user tokens we return basic user info from /me.
+          // For app-only tokens we just confirm that at least one site can be listed.
+          if (!this.isClientCredentialsMode) {
+            const userData = await response.json();
+            logger.info('Graph API user data fetch successful');
+            return {
+              success: true,
+              message: 'Login successful',
+              userData: {
+                displayName: userData.displayName,
+                userPrincipalName: userData.userPrincipalName,
+              },
+            };
+          }
+
+          logger.info('Client credentials access test successful (SharePoint sites accessible)');
           return {
             success: true,
-            message: 'Login successful',
-            userData: {
-              displayName: userData.displayName,
-              userPrincipalName: userData.userPrincipalName,
-            },
-          };
-        } else {
-          const errorText = await response.text();
-          logger.error(`Graph API user data fetch failed: ${response.status} - ${errorText}`);
-          return {
-            success: false,
-            message: `Login successful but Graph API access failed: ${response.status}`,
+            message: 'Client credentials login successful (SharePoint sites accessible)',
           };
         }
+
+        const errorText = await response.text();
+        logger.error(`Graph API access test failed: ${response.status} - ${errorText}`);
+        return {
+          success: false,
+          message: `Login successful but Graph API access failed: ${response.status}`,
+        };
       } catch (graphError) {
         logger.error(`Error fetching user data: ${(graphError as Error).message}`);
         return {

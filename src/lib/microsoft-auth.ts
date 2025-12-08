@@ -117,3 +117,46 @@ export async function refreshAccessToken(
 
   return response.json();
 }
+
+/**
+ * Acquire an application access token using the OAuth 2.0 client credentials flow.
+ *
+ * This is used for app-only (non-delegated) access where the MCP server authenticates
+ * directly with Microsoft Graph using a client ID and client secret.
+ */
+export async function getClientCredentialsAccessToken(
+  clientId: string,
+  clientSecret: string,
+  tenantId: string = 'common',
+  scope?: string
+): Promise<{
+  access_token: string;
+  token_type: string;
+  expires_in: number;
+  scope?: string;
+}> {
+  // Default to Microsoft Graph .default scope which maps to the app's configured permissions
+  const effectiveScope =
+    scope && scope.trim().length > 0 ? scope : 'https://graph.microsoft.com/.default';
+
+  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: clientId,
+      client_secret: clientSecret,
+      scope: effectiveScope,
+    }),
+  });
+
+  if (!response.ok) {
+    const error = await response.text();
+    logger.error(`Failed to acquire client credentials access token: ${error}`);
+    throw new Error(`Failed to acquire client credentials access token: ${error}`);
+  }
+
+  return response.json();
+}
