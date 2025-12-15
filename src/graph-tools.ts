@@ -334,6 +334,8 @@ interface SharePointFileNode {
   lastModifiedDateTime?: string;
   path: string;
   children?: SharePointFileNode[];
+  hiddenItemsCount?: number;
+  totalItemsCount?: number;
 }
 
 interface ListSharePointSiteFilesOptions {
@@ -345,6 +347,8 @@ interface ListSharePointSiteFilesOptions {
   maxDepth?: number;
   filter?: string;
   pageSize?: number;
+  maxItems?: number;
+  maxItemsPerFolder?: number;
 }
 
 async function resolveSiteDrive(
@@ -513,6 +517,8 @@ async function collectSharePointFiles(
     maxDepth = 10,
     filter,
     pageSize,
+    maxItems = 200,
+    maxItemsPerFolder = 50,
   } = options;
 
   const SAFE_MAX_DEPTH = 20;
@@ -525,6 +531,7 @@ async function collectSharePointFiles(
 
   const flatItems: SharePointFileNode[] = [];
   let truncated = false;
+  let totalItemsCount = 0;
 
   const walk = async (
     currentItemId: string,
@@ -550,11 +557,33 @@ async function collectSharePointFiles(
     };
 
     const childNodes: SharePointFileNode[] = [];
+    const totalChildren = children.length;
+    let hiddenInFolder = 0;
+    let processedInFolder = 0;
 
     for (const item of children) {
       const isFolder = !!item.folder;
       const name: string = item.name || '';
       const childPath = currentPath === '/' ? `/${name}` : `${currentPath}/${name}`;
+
+      // Check if item matches filter (for files and optionally folders)
+      const matchesItemFilter = isFolder
+        ? includeFolders && matchesFilter(name, filter)
+        : matchesFilter(name, filter);
+
+      // Check if we've reached the global item limit (only for items that would be returned)
+      if (totalItemsCount >= maxItems && matchesItemFilter) {
+        truncated = true;
+        hiddenInFolder = totalChildren - processedInFolder;
+        break;
+      }
+
+      // Check per-folder limit (count all items, not just matching ones)
+      if (processedInFolder >= maxItemsPerFolder) {
+        hiddenInFolder = totalChildren - processedInFolder;
+        truncated = true;
+        break;
+      }
 
       const baseNode: SharePointFileNode = {
         siteId,
@@ -571,24 +600,40 @@ async function collectSharePointFiles(
         path: childPath,
       };
 
-      if (!isFolder && matchesFilter(name, filter)) {
-        flatItems.push(baseNode);
-      } else if (isFolder) {
-        if (includeFolders && matchesFilter(name, filter)) {
-          flatItems.push(baseNode);
-        }
-      }
-
       if (isFolder) {
         if (depth < effectiveMaxDepth) {
           const childNode = await walk(item.id, childPath, depth + 1);
-          childNodes.push(childNode);
+          if (structure === 'tree') {
+            childNodes.push(childNode);
+          }
+          if (includeFolders && matchesFilter(name, filter)) {
+            flatItems.push(baseNode);
+            totalItemsCount++;
+          }
+          processedInFolder++;
         } else {
           truncated = true;
+          hiddenInFolder = totalChildren - processedInFolder;
+          break;
         }
-      } else if (structure === 'tree') {
-        childNodes.push(baseNode);
+      } else {
+        // It's a file
+        if (matchesFilter(name, filter)) {
+          if (structure === 'flat') {
+            flatItems.push(baseNode);
+          } else {
+            childNodes.push(baseNode);
+          }
+          totalItemsCount++;
+        }
+        processedInFolder++;
       }
+    }
+
+    // Set metadata about hidden items if any were skipped
+    if (hiddenInFolder > 0) {
+      node.hiddenItemsCount = hiddenInFolder;
+      node.totalItemsCount = totalChildren;
     }
 
     if (structure === 'tree') {
@@ -773,6 +818,18 @@ export function registerGraphTools(
           'Optional page size for Graph paging ($top) when listing folder children. Larger libraries may require multiple pages.'
         )
         .optional(),
+      maxItems: z
+        .number()
+        .describe(
+          'Maximum total number of items to return across all folders (default: 200). When exceeded, remaining items are hidden and marked in the response.'
+        )
+        .optional(),
+      maxItemsPerFolder: z
+        .number()
+        .describe(
+          'Maximum number of items to return per folder (default: 50). When exceeded, remaining items in that folder are hidden and the folder node will include hiddenItemsCount and totalItemsCount.'
+        )
+        .optional(),
     };
 
     server.tool(
@@ -794,6 +851,8 @@ export function registerGraphTools(
             maxDepth,
             filter,
             pageSize,
+            maxItems,
+            maxItemsPerFolder,
           } = params as {
             siteId: string;
             driveId?: string;
@@ -803,6 +862,8 @@ export function registerGraphTools(
             maxDepth?: number;
             filter?: string;
             pageSize?: number;
+            maxItems?: number;
+            maxItemsPerFolder?: number;
           };
 
           const data = await collectSharePointFiles(graphClient, {
@@ -814,6 +875,8 @@ export function registerGraphTools(
             maxDepth,
             filter,
             pageSize,
+            maxItems,
+            maxItemsPerFolder,
           });
 
           const result = {
