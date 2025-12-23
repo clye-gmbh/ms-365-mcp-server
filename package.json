@@ -50,6 +50,8 @@
     "zod": "^3.24.2"
   },
   "optionalDependencies": {
+    "@azure/identity": "^4.5.0",
+    "@azure/keyvault-secrets": "^4.9.0",
     "keytar": "^7.9.0"
   },
   "devDependencies": {
@@ -62,6 +64,7 @@
     "@types/node": "^22.15.15",
     "@typescript-eslint/eslint-plugin": "^8.38.0",
     "@typescript-eslint/parser": "^8.38.0",
+    "@vitest/coverage-v8": "^3.2.4",
     "eslint": "^9.31.0",
     "globals": "^16.3.0",
     "prettier": "^3.5.3",
