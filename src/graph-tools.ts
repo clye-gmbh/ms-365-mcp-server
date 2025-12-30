@@ -759,6 +759,8 @@ export function registerGraphTools(
         {
           title: tool.alias,
           readOnlyHint: tool.method.toUpperCase() === 'GET',
+          destructiveHint: ['POST', 'PATCH', 'DELETE'].includes(tool.method.toUpperCase()),
+          openWorldHint: true, // All tools call Microsoft Graph API
         },
         async (params) => executeGraphTool(tool, endpointConfig, graphClient, params)
       );
@@ -1108,6 +1110,7 @@ export function registerDiscoveryTools(
     {
       title: 'search-tools',
       readOnlyHint: true,
+      openWorldHint: true, // Searches Microsoft Graph API tools
     },
     async ({ query, category, limit = 20 }) => {
       const maxLimit = Math.min(limit, 50);
@@ -1176,6 +1179,8 @@ export function registerDiscoveryTools(
     {
       title: 'execute-tool',
       readOnlyHint: false,
+      destructiveHint: true, // Can execute any tool, including write operations
+      openWorldHint: true, // Executes against Microsoft Graph API
     },
     async ({ tool_name, parameters = {} }) => {
       const toolData = toolsRegistry.get(tool_name);
