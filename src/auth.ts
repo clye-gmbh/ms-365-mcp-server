@@ -6,6 +6,11 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { getClientCredentialsAccessToken } from './lib/microsoft-auth.js';
 import { getSecrets, type AppSecrets } from './secrets.js';
+import {
+  getCloudEndpoints,
+  getDefaultClientId,
+  type CloudType,
+} from './cloud-config.js';
 
 // Ok so this is a hack to lazily import keytar only when needed
 // since --http mode may not need it at all, and keytar can be a pain to install (looking at you alpine)
@@ -58,12 +63,23 @@ const SELECTED_ACCOUNT_PATH = path.join(FALLBACK_DIR, '..', '.selected-account.j
  * This is called during AuthManager initialization.
  */
 function createMsalConfig(secrets: AppSecrets): Configuration {
+  const cloudEndpoints = getCloudEndpoints(secrets.cloudType);
   return {
     auth: {
-      clientId: secrets.clientId || '084a3e9f-a9f4-43f7-89f9-d229cf97853e',
-      authority: `https://login.microsoftonline.com/${secrets.tenantId || 'common'}`,
+      clientId: secrets.clientId || getDefaultClientId(secrets.cloudType),
+      authority: `${cloudEndpoints.authority}/${secrets.tenantId || 'common'}`,
     },
   };
+}
+
+function tenantIdFromAuthority(authority?: string): string | undefined {
+  if (!authority) return undefined;
+  try {
+    const segment = new URL(authority).pathname.replace(/^\//, '').split('/')[0];
+    return segment || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 interface ScopeHierarchy {
@@ -156,11 +172,12 @@ class AuthManager {
   private clientCredentialsExpiry: number | null;
   private selectedAccountId: string | null;
   private readonly resolvedClientSecret?: string;
+  private readonly cloudType: CloudType;
 
   constructor(
     config: Configuration,
     scopes: string[] = buildScopesFromEndpoints(),
-    options?: { clientSecret?: string }
+    options?: { clientSecret?: string; cloudType?: CloudType }
   ) {
     logger.info(`And scopes are ${scopes.join(', ')}`, scopes);
     this.config = config;
@@ -172,6 +189,7 @@ class AuthManager {
     this.clientCredentialsExpiry = null;
     this.selectedAccountId = null;
     this.resolvedClientSecret = options?.clientSecret;
+    this.cloudType = options?.cloudType ?? 'global';
 
     const oauthTokenFromEnv = process.env.MS365_MCP_OAUTH_TOKEN;
     this.oauthToken = oauthTokenFromEnv ?? null;
@@ -191,7 +209,10 @@ class AuthManager {
   static async create(scopes: string[] = buildScopesFromEndpoints()): Promise<AuthManager> {
     const secrets = await getSecrets();
     const config = createMsalConfig(secrets);
-    return new AuthManager(config, scopes, { clientSecret: secrets.clientSecret });
+    return new AuthManager(config, scopes, {
+      clientSecret: secrets.clientSecret,
+      cloudType: secrets.cloudType,
+    });
   }
 
   async loadTokenCache(): Promise<void> {
@@ -329,11 +350,10 @@ class AuthManager {
         return this.clientCredentialsAccessToken;
       }
 
-      const tenantMatch = this.config.auth?.authority?.match(
-        /login\.microsoftonline\.com\/([^/?]+)/
-      );
       const tenantId =
-        process.env.MS365_MCP_TENANT_ID || tenantMatch?.[1] || 'common';
+        process.env.MS365_MCP_TENANT_ID ||
+        tenantIdFromAuthority(this.config.auth?.authority) ||
+        'common';
       const clientId = process.env.MS365_MCP_CLIENT_ID || this.config.auth!.clientId!;
       const clientSecret =
         process.env.MS365_MCP_CLIENT_SECRET || this.resolvedClientSecret;
@@ -348,7 +368,8 @@ class AuthManager {
         clientId,
         clientSecret,
         tenantId,
-        scopeOverride
+        scopeOverride,
+        this.cloudType
       );
 
       this.clientCredentialsAccessToken = tokenResponse.access_token;
@@ -484,11 +505,11 @@ class AuthManager {
       logger.info('Token retrieved successfully, testing Graph API access...');
 
       try {
-        // In client credentials (app-only) mode, /me is not available.
-        // Instead, test access by calling a SharePoint sites endpoint.
+        const secrets = await getSecrets();
+        const cloudEndpoints = getCloudEndpoints(secrets.cloudType);
         const testEndpoint = this.isClientCredentialsMode
-          ? 'https://graph.microsoft.com/v1.0/sites?top=1'
-          : 'https://graph.microsoft.com/v1.0/me';
+          ? `${cloudEndpoints.graphApi}/v1.0/sites?top=1`
+          : `${cloudEndpoints.graphApi}/v1.0/me`;
 
         const response = await fetch(testEndpoint, {
           headers: {
