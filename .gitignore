@@ -156,3 +156,6 @@ CLAUDE.md
 # MCP configuration (contains sensitive keys)
 .mcp.json
 downloads/*
+
+# Finder metadata files
+.DS_Store
