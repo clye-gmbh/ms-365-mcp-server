@@ -4,6 +4,7 @@ import { refreshAccessToken } from './lib/microsoft-auth.js';
 import { encode as toonEncode } from '@toon-format/toon';
 import type { AppSecrets } from './secrets.js';
 import { getCloudEndpoints } from './cloud-config.js';
+import { getRequestTokens } from './request-context.js';
 
 interface GraphRequestOptions {
   headers?: Record<string, string>;
@@ -43,8 +44,6 @@ interface McpResponse {
 class GraphClient {
   private authManager: AuthManager;
   private secrets: AppSecrets;
-  private accessToken: string | null = null;
-  private refreshToken: string | null = null;
   private readonly outputFormat: 'json' | 'toon' = 'json';
 
   constructor(
@@ -57,16 +56,11 @@ class GraphClient {
     this.outputFormat = outputFormat;
   }
 
-  setOAuthTokens(accessToken: string, refreshToken?: string): void {
-    this.accessToken = accessToken;
-    this.refreshToken = refreshToken || null;
-  }
-
   async makeRequest(endpoint: string, options: GraphRequestOptions = {}): Promise<unknown> {
-    // Use OAuth tokens if available, otherwise fall back to authManager
+    const contextTokens = getRequestTokens();
     let accessToken =
-      options.accessToken || this.accessToken || (await this.authManager.getToken());
-    let refreshToken = options.refreshToken || this.refreshToken;
+      options.accessToken ?? contextTokens?.accessToken ?? (await this.authManager.getToken());
+    const refreshToken = options.refreshToken ?? contextTokens?.refreshToken;
 
     if (!accessToken) {
       throw new Error('No access token available');
@@ -77,13 +71,8 @@ class GraphClient {
 
       if (response.status === 401 && refreshToken) {
         // Token expired, try to refresh
-        await this.refreshAccessToken(refreshToken);
-
-        // Update token for retry
-        accessToken = this.accessToken || accessToken;
-        if (!accessToken) {
-          throw new Error('Failed to refresh access token');
-        }
+        const newTokens = await this.refreshAccessToken(refreshToken);
+        accessToken = newTokens.accessToken;
 
         // Retry the request with new token
         response = await this.performRequest(endpoint, accessToken, options);
@@ -146,10 +135,10 @@ class GraphClient {
    * want to persist the data on disk instead of parsing it as JSON.
    */
   async downloadBinary(endpoint: string, options: GraphRequestOptions = {}): Promise<Buffer> {
-    // Use OAuth tokens if available, otherwise fall back to authManager
+    const contextTokens = getRequestTokens();
     let accessToken =
-      options.accessToken || this.accessToken || (await this.authManager.getToken());
-    let refreshToken = options.refreshToken || this.refreshToken;
+      options.accessToken ?? contextTokens?.accessToken ?? (await this.authManager.getToken());
+    let refreshToken = options.refreshToken ?? contextTokens?.refreshToken;
 
     if (!accessToken) {
       throw new Error('No access token available');
@@ -159,16 +148,8 @@ class GraphClient {
       let response = await this.performRequest(endpoint, accessToken, options);
 
       if (response.status === 401 && refreshToken) {
-        // Token expired, try to refresh
-        await this.refreshAccessToken(refreshToken);
-
-        // Update token for retry
-        accessToken = this.accessToken || accessToken;
-        if (!accessToken) {
-          throw new Error('Failed to refresh access token');
-        }
-
-        // Retry the request with new token
+        const newTokens = await this.refreshAccessToken(refreshToken);
+        accessToken = newTokens.accessToken;
         response = await this.performRequest(endpoint, accessToken, options);
       }
 
@@ -198,7 +179,9 @@ class GraphClient {
     }
   }
 
-  private async refreshAccessToken(refreshToken: string): Promise<void> {
+  private async refreshAccessToken(
+    refreshToken: string
+  ): Promise<{ accessToken: string; refreshToken?: string }> {
     const tenantId = this.secrets.tenantId || 'common';
     const clientId = this.secrets.clientId;
     const clientSecret = this.secrets.clientSecret;
@@ -217,10 +200,11 @@ class GraphClient {
       tenantId,
       this.secrets.cloudType
     );
-    this.accessToken = response.access_token;
-    if (response.refresh_token) {
-      this.refreshToken = response.refresh_token;
-    }
+
+    return {
+      accessToken: response.access_token,
+      refreshToken: response.refresh_token,
+    };
   }
 
   private async performRequest(
