@@ -55,8 +55,34 @@ const SERVICE_NAME = 'ms-365-mcp-server';
 const TOKEN_CACHE_ACCOUNT = 'msal-token-cache';
 const SELECTED_ACCOUNT_KEY = 'selected-account';
 const FALLBACK_DIR = path.dirname(fileURLToPath(import.meta.url));
-const FALLBACK_PATH = path.join(FALLBACK_DIR, '..', '.token-cache.json');
-const SELECTED_ACCOUNT_PATH = path.join(FALLBACK_DIR, '..', '.selected-account.json');
+const DEFAULT_TOKEN_CACHE_PATH = path.join(FALLBACK_DIR, '..', '.token-cache.json');
+const DEFAULT_SELECTED_ACCOUNT_PATH = path.join(FALLBACK_DIR, '..', '.selected-account.json');
+
+/**
+ * Returns the token cache file path.
+ * Uses MS365_MCP_TOKEN_CACHE_PATH env var if set, otherwise the default fallback.
+ */
+function getTokenCachePath(): string {
+  const envPath = process.env.MS365_MCP_TOKEN_CACHE_PATH?.trim();
+  return envPath || DEFAULT_TOKEN_CACHE_PATH;
+}
+
+/**
+ * Returns the selected-account file path.
+ * Uses MS365_MCP_SELECTED_ACCOUNT_PATH env var if set, otherwise the default fallback.
+ */
+function getSelectedAccountPath(): string {
+  const envPath = process.env.MS365_MCP_SELECTED_ACCOUNT_PATH?.trim();
+  return envPath || DEFAULT_SELECTED_ACCOUNT_PATH;
+}
+
+/**
+ * Ensures the parent directory of a file path exists, creating it recursively if needed.
+ */
+function ensureParentDir(filePath: string): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+}
 
 /**
  * Creates MSAL configuration from secrets.
@@ -236,8 +262,9 @@ class AuthManager {
         );
       }
 
-      if (!cacheData && existsSync(FALLBACK_PATH)) {
-        cacheData = readFileSync(FALLBACK_PATH, 'utf8');
+      const cachePath = getTokenCachePath();
+      if (!cacheData && existsSync(cachePath)) {
+        cacheData = readFileSync(cachePath, 'utf8');
       }
 
       if (cacheData) {
@@ -269,8 +296,9 @@ class AuthManager {
         );
       }
 
-      if (!selectedAccountData && existsSync(SELECTED_ACCOUNT_PATH)) {
-        selectedAccountData = readFileSync(SELECTED_ACCOUNT_PATH, 'utf8');
+      const accountPath = getSelectedAccountPath();
+      if (!selectedAccountData && existsSync(accountPath)) {
+        selectedAccountData = readFileSync(accountPath, 'utf8');
       }
 
       if (selectedAccountData) {
@@ -292,14 +320,18 @@ class AuthManager {
         if (kt) {
           await kt.setPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT, cacheData);
         } else {
-          fs.writeFileSync(FALLBACK_PATH, cacheData, { mode: 0o600 });
+          const cachePath = getTokenCachePath();
+          ensureParentDir(cachePath);
+          fs.writeFileSync(cachePath, cacheData, { mode: 0o600 });
         }
       } catch (keytarError) {
         logger.warn(
           `Keychain save failed, falling back to file storage: ${(keytarError as Error).message}`
         );
 
-        fs.writeFileSync(FALLBACK_PATH, cacheData, { mode: 0o600 });
+        const cachePath = getTokenCachePath();
+        ensureParentDir(cachePath);
+        fs.writeFileSync(cachePath, cacheData, { mode: 0o600 });
       }
     } catch (error) {
       logger.error(`Error saving token cache: ${(error as Error).message}`);
@@ -315,14 +347,18 @@ class AuthManager {
         if (kt) {
           await kt.setPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY, selectedAccountData);
         } else {
-          fs.writeFileSync(SELECTED_ACCOUNT_PATH, selectedAccountData, { mode: 0o600 });
+          const accountPath = getSelectedAccountPath();
+          ensureParentDir(accountPath);
+          fs.writeFileSync(accountPath, selectedAccountData, { mode: 0o600 });
         }
       } catch (keytarError) {
         logger.warn(
           `Keychain save failed for selected account, falling back to file storage: ${(keytarError as Error).message}`
         );
 
-        fs.writeFileSync(SELECTED_ACCOUNT_PATH, selectedAccountData, { mode: 0o600 });
+        const accountPath = getSelectedAccountPath();
+        ensureParentDir(accountPath);
+        fs.writeFileSync(accountPath, selectedAccountData, { mode: 0o600 });
       }
     } catch (error) {
       logger.error(`Error saving selected account: ${(error as Error).message}`);
@@ -585,12 +621,14 @@ class AuthManager {
         logger.warn(`Keychain deletion failed: ${(keytarError as Error).message}`);
       }
 
-      if (fs.existsSync(FALLBACK_PATH)) {
-        fs.unlinkSync(FALLBACK_PATH);
+      const cachePath = getTokenCachePath();
+      if (fs.existsSync(cachePath)) {
+        fs.unlinkSync(cachePath);
       }
 
-      if (fs.existsSync(SELECTED_ACCOUNT_PATH)) {
-        fs.unlinkSync(SELECTED_ACCOUNT_PATH);
+      const accountPath = getSelectedAccountPath();
+      if (fs.existsSync(accountPath)) {
+        fs.unlinkSync(accountPath);
       }
 
       return true;
@@ -659,4 +697,4 @@ class AuthManager {
 }
 
 export default AuthManager;
-export { buildScopesFromEndpoints };
+export { buildScopesFromEndpoints, getTokenCachePath, getSelectedAccountPath };
