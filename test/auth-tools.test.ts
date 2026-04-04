@@ -20,7 +20,11 @@ vi.mock('zod', () => {
 
 describe('Auth Tools', () => {
   let server: { tool: ReturnType<typeof vi.fn> };
-  let authManager: { logout: ReturnType<typeof vi.fn>; testLogin: ReturnType<typeof vi.fn> };
+  let authManager: {
+    logout: ReturnType<typeof vi.fn>;
+    testLogin: ReturnType<typeof vi.fn>;
+    acquireTokenByDeviceCode: ReturnType<typeof vi.fn>;
+  };
   let loginTool: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
@@ -37,9 +41,10 @@ describe('Auth Tools', () => {
     authManager = {
       testLogin: vi.fn(),
       acquireTokenByDeviceCode: vi.fn(),
+      logout: vi.fn(),
     };
 
-    registerAuthTools(server, authManager);
+    registerAuthTools(server, authManager as never);
   });
 
   describe('login tool', () => {
@@ -62,12 +67,7 @@ describe('Auth Tools', () => {
         userData: { displayName: 'Test User' },
       });
 
-      authManager.acquireTokenByDeviceCode.mockImplementation(
-        (callback: (text: string) => void) => {
-          callback('Login instructions');
-          return Promise.resolve();
-        }
-      );
+      authManager.acquireTokenByDeviceCode.mockResolvedValue('DEVCODE123');
 
       const result = await loginTool({ force: true });
 
@@ -75,8 +75,8 @@ describe('Auth Tools', () => {
       expect(authManager.acquireTokenByDeviceCode).toHaveBeenCalled();
       expect(result.content[0].text).toBe(
         JSON.stringify({
-          error: 'device_code_required',
-          message: 'Login instructions',
+          url: 'https://microsoft.com/devicelogin',
+          code: 'DEVCODE123',
         })
       );
     });
@@ -87,12 +87,7 @@ describe('Auth Tools', () => {
         message: 'Not logged in',
       });
 
-      authManager.acquireTokenByDeviceCode.mockImplementation(
-        (callback: (text: string) => void) => {
-          callback('Login instructions');
-          return Promise.resolve();
-        }
-      );
+      authManager.acquireTokenByDeviceCode.mockResolvedValue('DEVCODE456');
 
       const result = await loginTool({ force: false });
 
@@ -100,8 +95,8 @@ describe('Auth Tools', () => {
       expect(authManager.acquireTokenByDeviceCode).toHaveBeenCalled();
       expect(result.content[0].text).toBe(
         JSON.stringify({
-          error: 'device_code_required',
-          message: 'Login instructions',
+          url: 'https://microsoft.com/devicelogin',
+          code: 'DEVCODE456',
         })
       );
     });

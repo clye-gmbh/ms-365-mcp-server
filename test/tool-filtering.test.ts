@@ -51,8 +51,8 @@ describe('Tool Filtering', () => {
   it('should register all tools when no filter is provided', () => {
     registerGraphTools(server, graphClient, false);
 
-    // 5 mocked endpoints + 1 parse-teams-url utility tool
-    expect(toolSpy).toHaveBeenCalledTimes(6);
+    // 5 mocked endpoints + 1 parse-teams-url + 2 fork convenience tools
+    expect(toolSpy).toHaveBeenCalledTimes(8);
     expect(toolSpy).toHaveBeenCalledWith(
       'list-mail-messages',
       expect.any(String),
@@ -93,7 +93,7 @@ describe('Tool Filtering', () => {
   it('should filter tools by regex pattern - mail only', () => {
     registerGraphTools(server, graphClient, false, 'mail');
 
-    expect(toolSpy).toHaveBeenCalledTimes(2);
+    expect(toolSpy).toHaveBeenCalledTimes(4);
     expect(toolSpy).toHaveBeenCalledWith(
       'list-mail-messages',
       expect.any(String),
@@ -113,7 +113,7 @@ describe('Tool Filtering', () => {
   it('should filter tools by regex pattern - calendar or excel', () => {
     registerGraphTools(server, graphClient, false, 'calendar|excel');
 
-    expect(toolSpy).toHaveBeenCalledTimes(2);
+    expect(toolSpy).toHaveBeenCalledTimes(4);
     expect(toolSpy).toHaveBeenCalledWith(
       'list-calendar-events',
       expect.any(String),
@@ -133,14 +133,14 @@ describe('Tool Filtering', () => {
   it('should handle invalid regex patterns gracefully', () => {
     registerGraphTools(server, graphClient, false, '[invalid regex');
 
-    // 5 mocked endpoints + 1 parse-teams-url utility tool (no filter applied on invalid regex)
-    expect(toolSpy).toHaveBeenCalledTimes(6);
+    // 5 mocked endpoints + 1 parse-teams-url + 2 fork tools (no filter applied on invalid regex)
+    expect(toolSpy).toHaveBeenCalledTimes(8);
   });
 
   it('should combine read-only and filtering correctly', () => {
     registerGraphTools(server, graphClient, true, 'mail');
 
-    expect(toolSpy).toHaveBeenCalledTimes(1);
+    expect(toolSpy).toHaveBeenCalledTimes(3);
     expect(toolSpy).toHaveBeenCalledWith(
       'list-mail-messages',
       expect.any(String),
@@ -153,6 +153,6 @@ describe('Tool Filtering', () => {
   it('should register no tools when pattern matches nothing', () => {
     registerGraphTools(server, graphClient, false, 'nonexistent');
 
-    expect(toolSpy).toHaveBeenCalledTimes(0);
+    expect(toolSpy).toHaveBeenCalledTimes(2);
   });
 });
