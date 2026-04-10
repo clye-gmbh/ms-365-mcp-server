@@ -6,11 +6,7 @@ import { fileURLToPath } from 'url';
 import path from 'path';
 import { getClientCredentialsAccessToken } from './lib/microsoft-auth.js';
 import { getSecrets, type AppSecrets } from './secrets.js';
-import {
-  getCloudEndpoints,
-  getDefaultClientId,
-  type CloudType,
-} from './cloud-config.js';
+import { getCloudEndpoints, getDefaultClientId, type CloudType } from './cloud-config.js';
 
 // Ok so this is a hack to lazily import keytar only when needed
 // since --http mode may not need it at all, and keytar can be a pain to install (looking at you alpine)
@@ -421,8 +417,7 @@ class AuthManager {
         tenantIdFromAuthority(this.config.auth?.authority) ||
         'common';
       const clientId = process.env.MS365_MCP_CLIENT_ID || this.config.auth!.clientId!;
-      const clientSecret =
-        process.env.MS365_MCP_CLIENT_SECRET || this.resolvedClientSecret;
+      const clientSecret = process.env.MS365_MCP_CLIENT_SECRET || this.resolvedClientSecret;
 
       if (!clientSecret) {
         throw new Error('MS365_MCP_CLIENT_SECRET not configured for client credentials mode');

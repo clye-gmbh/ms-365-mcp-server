@@ -152,25 +152,20 @@ export async function getClientCredentialsAccessToken(
 }> {
   const cloudEndpoints = getCloudEndpoints(cloudType);
   const effectiveScope =
-    scope && scope.trim().length > 0
-      ? scope
-      : `${cloudEndpoints.graphApi}/.default`;
+    scope && scope.trim().length > 0 ? scope : `${cloudEndpoints.graphApi}/.default`;
 
-  const response = await fetch(
-    `${cloudEndpoints.authority}/${tenantId}/oauth2/v2.0/token`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-      },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: clientId,
-        client_secret: clientSecret,
-        scope: effectiveScope,
-      }),
-    }
-  );
+  const response = await fetch(`${cloudEndpoints.authority}/${tenantId}/oauth2/v2.0/token`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      grant_type: 'client_credentials',
+      client_id: clientId,
+      client_secret: clientSecret,
+      scope: effectiveScope,
+    }),
+  });
 
   if (!response.ok) {
     const error = await response.text();
