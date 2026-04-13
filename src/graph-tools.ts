@@ -483,7 +483,10 @@ interface ListSharePointSiteFilesOptions {
   maxItemsPerFolder?: number;
 }
 
-const CUSTOM_TOOL_ALIASES = new Set(['get-sharepoint-site-drive-delta']);
+const CUSTOM_TOOL_ALIASES = new Set([
+  'get-sharepoint-site-drive-delta',
+  'get-sharepoint-site-delta',
+]);
 
 function buildSiteDriveDeltaEndpoint(siteId: string, driveId: string, delta?: string): string {
   const baseEndpoint = `/sites/${encodeURIComponent(siteId)}/drives/${encodeURIComponent(

@@ -70,6 +70,7 @@ function ensureSyntheticPaths(openApiSpec, endpoints) {
 
   const syntheticPathFactories = {
     '/sites/{site-id}/drives/{drive-id}/root/delta()': createSharePointSiteDriveDeltaPathItem,
+    '/sites/{site-id}/delta()': createSharePointSiteDeltaPathItem,
   };
 
   for (const endpoint of endpoints) {
@@ -115,6 +116,76 @@ function createSharePointSiteDriveDeltaPathItem(endpoint) {
           required: false,
           description:
             'Optional delta token for incremental sync. Use latest to get the newest delta token without enumerating current content.',
+          schema: {
+            type: 'string',
+          },
+        },
+      ],
+      responses: {
+        200: {
+          description: 'Successful response',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                additionalProperties: true,
+                properties: {
+                  value: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      additionalProperties: true,
+                    },
+                  },
+                  '@odata.nextLink': {
+                    type: 'string',
+                  },
+                  '@odata.deltaLink': {
+                    type: 'string',
+                  },
+                },
+              },
+            },
+          },
+        },
+        default: {
+          description: 'Error response',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                additionalProperties: true,
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+function createSharePointSiteDeltaPathItem(endpoint) {
+  return {
+    get: {
+      operationId: endpoint.toolName,
+      summary: 'Track changes in a SharePoint site',
+      description:
+        'Synthetic OpenAPI path for SharePoint site delta. The upstream Microsoft Graph OpenAPI document currently does not expose this path directly.',
+      parameters: [
+        {
+          name: 'site-id',
+          in: 'path',
+          required: true,
+          description: 'SharePoint site ID',
+          schema: {
+            type: 'string',
+          },
+        },
+        {
+          name: 'token',
+          in: 'query',
+          required: false,
+          description: 'Optional delta token for incremental sync.',
           schema: {
             type: 'string',
           },
