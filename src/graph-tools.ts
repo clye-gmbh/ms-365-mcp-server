@@ -508,12 +508,10 @@ function buildSiteDriveDeltaEndpoint(siteId: string, driveId: string, delta?: st
   return `${baseEndpoint}(token='${escapedToken}')`;
 }
 
-async function resolveSiteDrive(
+async function getSharePointSiteDrives(
   graphClient: GraphClient,
-  siteId: string,
-  driveId?: string,
-  driveName?: string
-): Promise<SharePointDriveInfo> {
+  siteId: string
+): Promise<Array<{ id?: string; name?: string; root?: { id?: string } }>> {
   const endpoint = `/sites/${encodeURIComponent(siteId)}/drives`;
   logger.info(`Resolving SharePoint drives for siteId=${siteId}`);
 
@@ -525,6 +523,17 @@ async function resolveSiteDrive(
   if (!Array.isArray(drives) || drives.length === 0) {
     throw new Error(`No document libraries (drives) found for siteId=${siteId}`);
   }
+
+  return drives;
+}
+
+async function resolveSiteDrive(
+  graphClient: GraphClient,
+  siteId: string,
+  driveId?: string,
+  driveName?: string
+): Promise<SharePointDriveInfo> {
+  const drives = await getSharePointSiteDrives(graphClient, siteId);
 
   const normalize = (value: string | undefined | null): string =>
     (value || '').trim().toLowerCase();
@@ -1254,6 +1263,148 @@ export function registerGraphTools(
     } catch (error) {
       logger.error(
         `Failed to register custom tool get-sharepoint-site-drive-delta: ${(error as Error).message}`
+      );
+      failedCount++;
+    }
+  }
+
+  // Register a custom convenience tool for site-wide SharePoint drive delta queries
+  if (orgMode) {
+    try {
+      const siteDeltaParamSchema = {
+        siteId: z.string().describe('SharePoint site ID whose document libraries should be synced'),
+        delta: z
+          .string()
+          .describe(
+            'Optional fallback delta token or full @odata.deltaLink/@odata.nextLink URL. Used for drives that do not have a specific token in deltaByDrive.'
+          )
+          .optional(),
+        deltaByDrive: z
+          .record(z.string())
+          .describe(
+            'Optional per-drive delta token map: { "<driveId>": "<token-or-link>" }. Useful for incremental sync across multiple libraries.'
+          )
+          .optional(),
+        driveIds: z
+          .array(z.string())
+          .describe(
+            'Optional list of drive IDs to limit the sync to specific document libraries within the site.'
+          )
+          .optional(),
+      };
+
+      server.tool(
+        'get-sharepoint-site-delta',
+        'Run a site-wide SharePoint delta sync across all document libraries (drives) in a site. Internally calls /sites/{siteId}/drives and then /sites/{siteId}/drives/{driveId}/root/delta for each drive.',
+        siteDeltaParamSchema,
+        {
+          title: 'get-sharepoint-site-delta',
+          readOnlyHint: true,
+        },
+        async ({ siteId, delta, deltaByDrive, driveIds }) => {
+          try {
+            const drives = await getSharePointSiteDrives(graphClient, siteId);
+            const requestedDriveIds = new Set(
+              (driveIds || []).map((id) => id.trim()).filter(Boolean)
+            );
+            const selectedDrives =
+              requestedDriveIds.size > 0
+                ? drives.filter(
+                    (d) =>
+                      !!d.id &&
+                      [...requestedDriveIds].some(
+                        (requestedId) => requestedId.toLowerCase() === (d.id || '').toLowerCase()
+                      )
+                  )
+                : drives;
+
+            const perDriveResults: Array<Record<string, unknown>> = [];
+
+            for (const drive of selectedDrives) {
+              if (!drive.id) {
+                continue;
+              }
+
+              const driveDelta =
+                (deltaByDrive &&
+                  Object.prototype.hasOwnProperty.call(deltaByDrive, drive.id) &&
+                  (deltaByDrive as Record<string, string>)[drive.id]) ||
+                delta;
+              const endpoint = buildSiteDriveDeltaEndpoint(siteId, drive.id, driveDelta);
+
+              logger.info(
+                `Running site-wide SharePoint drive delta for siteId=${siteId}, driveId=${drive.id}: ${endpoint}`
+              );
+
+              try {
+                const rawResponse = await graphClient.makeRequest(endpoint, {
+                  method: 'GET',
+                });
+
+                const responsePayload =
+                  rawResponse && typeof rawResponse === 'object' && !Array.isArray(rawResponse)
+                    ? (rawResponse as Record<string, unknown>)
+                    : { value: rawResponse };
+
+                perDriveResults.push({
+                  driveId: drive.id,
+                  driveName: drive.name || drive.id,
+                  endpoint,
+                  result: {
+                    ...responsePayload,
+                    nextLink: responsePayload['@odata.nextLink'],
+                    deltaLink: responsePayload['@odata.deltaLink'],
+                  },
+                });
+              } catch (error) {
+                perDriveResults.push({
+                  driveId: drive.id,
+                  driveName: drive.name || drive.id,
+                  endpoint,
+                  error: (error as Error).message,
+                });
+              }
+            }
+
+            const result: Record<string, unknown> = {
+              siteId,
+              drivesRequested: requestedDriveIds.size > 0 ? [...requestedDriveIds] : 'all',
+              drivesProcessed: selectedDrives.length,
+              hasErrors: perDriveResults.some((entry) => !!entry.error),
+              drives: perDriveResults,
+            };
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(result, null, 2),
+                },
+              ],
+              structuredContent: result,
+            };
+          } catch (error) {
+            const message = `Failed to get SharePoint site delta: ${(error as Error).message}`;
+            logger.error(message);
+            const structuredError: Record<string, unknown> = { error: message };
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(structuredError),
+                },
+              ],
+              isError: true,
+              structuredContent: structuredError,
+            };
+          }
+        }
+      );
+
+      registeredCount++;
+    } catch (error) {
+      logger.error(
+        `Failed to register custom tool get-sharepoint-site-delta: ${(error as Error).message}`
       );
       failedCount++;
     }
