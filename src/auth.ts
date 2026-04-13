@@ -774,6 +774,16 @@ class AuthManager {
       return this.oauthToken;
     }
 
+    // App-only mode has no user accounts in MSAL cache.
+    // Reuse the shared token acquisition path instead of account resolution.
+    if (this.isClientCredentialsMode) {
+      const token = await this.getToken();
+      if (!token) {
+        throw new Error('No valid token found for client credentials mode.');
+      }
+      return token;
+    }
+
     let targetAccount: AccountInfo | null = null;
 
     if (identifier) {

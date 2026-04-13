@@ -245,4 +245,39 @@ describe('Multi-account support', () => {
       }
     });
   });
+
+  describe('getTokenForAccount() in client credentials mode', () => {
+    function createClientCredentialsAuthManager(getTokenResult: string | null) {
+      const authManager = Object.create(AuthManager.prototype) as AuthManager & {
+        isOAuthMode: boolean;
+        oauthToken: string | null;
+        isClientCredentialsMode: boolean;
+        getToken: ReturnType<typeof vi.fn>;
+      };
+
+      authManager.isOAuthMode = false;
+      authManager.oauthToken = null;
+      authManager.isClientCredentialsMode = true;
+      authManager.getToken = vi.fn().mockResolvedValue(getTokenResult);
+
+      return authManager;
+    }
+
+    it('should return app token without requiring accounts', async () => {
+      const auth = createClientCredentialsAuthManager('app-only-token');
+
+      const token = await auth.getTokenForAccount();
+      expect(token).toBe('app-only-token');
+      expect(auth.getToken).toHaveBeenCalledTimes(1);
+    });
+
+    it('should throw if app token acquisition fails', async () => {
+      const auth = createClientCredentialsAuthManager(null);
+
+      await expect(auth.getTokenForAccount()).rejects.toThrow(
+        /No valid token found for client credentials mode/
+      );
+      expect(auth.getToken).toHaveBeenCalledTimes(1);
+    });
+  });
 });
