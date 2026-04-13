@@ -857,6 +857,12 @@
     "workScopes": ["Sites.Read.All"]
   },
   {
+    "pathPattern": "/sites/{site-id}/delta()",
+    "method": "get",
+    "toolName": "get-sharepoint-site-delta",
+    "workScopes": ["Sites.Read.All"]
+  },
+  {
     "pathPattern": "/search/query",
     "method": "post",
     "toolName": "search-query",
