@@ -248,19 +248,14 @@ describe('Multi-account support', () => {
 
   describe('getTokenForAccount() in client credentials mode', () => {
     function createClientCredentialsAuthManager(getTokenResult: string | null) {
-      const authManager = Object.create(AuthManager.prototype) as AuthManager & {
-        isOAuthMode: boolean;
-        oauthToken: string | null;
-        isClientCredentialsMode: boolean;
-        getToken: ReturnType<typeof vi.fn>;
-      };
+      const authManager = Object.create(AuthManager.prototype) as any;
 
       authManager.isOAuthMode = false;
       authManager.oauthToken = null;
       authManager.isClientCredentialsMode = true;
       authManager.getToken = vi.fn().mockResolvedValue(getTokenResult);
 
-      return authManager;
+      return authManager as AuthManager & { getToken: ReturnType<typeof vi.fn> };
     }
 
     it('should return app token without requiring accounts', async () => {
