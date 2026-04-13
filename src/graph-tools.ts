@@ -483,6 +483,8 @@ interface ListSharePointSiteFilesOptions {
   maxItemsPerFolder?: number;
 }
 
+const CUSTOM_TOOL_ALIASES = new Set(['get-sharepoint-site-drive-delta']);
+
 function buildSiteDriveDeltaEndpoint(siteId: string, driveId: string, delta?: string): string {
   const baseEndpoint = `/sites/${encodeURIComponent(siteId)}/drives/${encodeURIComponent(
     driveId
@@ -847,6 +849,12 @@ export function registerGraphTools(
   let failedCount = 0;
 
   for (const tool of api.endpoints) {
+    if (CUSTOM_TOOL_ALIASES.has(tool.alias)) {
+      logger.info(`Skipping generated tool ${tool.alias} - custom implementation overrides it`);
+      skippedCount++;
+      continue;
+    }
+
     const endpointConfig = endpointsData.find((e) => e.toolName === tool.alias);
     if (!orgMode && endpointConfig && !endpointConfig.scopes && endpointConfig.workScopes) {
       logger.info(`Skipping work account tool ${tool.alias} - not in org mode`);
@@ -1433,6 +1441,10 @@ function buildToolsRegistry(
   >();
 
   for (const tool of api.endpoints) {
+    if (CUSTOM_TOOL_ALIASES.has(tool.alias)) {
+      continue;
+    }
+
     const endpointConfig = endpointsData.find((e) => e.toolName === tool.alias);
 
     if (!orgMode && endpointConfig && !endpointConfig.scopes && endpointConfig.workScopes) {

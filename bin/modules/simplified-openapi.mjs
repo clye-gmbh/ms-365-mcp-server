@@ -7,6 +7,7 @@ export function createAndSaveSimplifiedOpenAPI(endpointsFile, openapiFile, opena
 
   const spec = fs.readFileSync(openapiFile, 'utf8');
   const openApiSpec = yaml.load(spec);
+  ensureSyntheticPaths(openApiSpec, endpoints);
 
   for (const endpoint of endpoints) {
     if (!openApiSpec.paths[endpoint.pathPattern]) {
@@ -60,6 +61,106 @@ export function createAndSaveSimplifiedOpenAPI(endpointsFile, openapiFile, opena
   pruneUnusedSchemas(openApiSpec, usedSchemas);
 
   fs.writeFileSync(openapiTrimmedFile, yaml.dump(openApiSpec));
+}
+
+function ensureSyntheticPaths(openApiSpec, endpoints) {
+  if (!openApiSpec.paths) {
+    openApiSpec.paths = {};
+  }
+
+  const syntheticPathFactories = {
+    '/sites/{site-id}/drives/{drive-id}/root/delta()': createSharePointSiteDriveDeltaPathItem,
+  };
+
+  for (const endpoint of endpoints) {
+    const createSyntheticPath = syntheticPathFactories[endpoint.pathPattern];
+    if (!createSyntheticPath || openApiSpec.paths[endpoint.pathPattern]) {
+      continue;
+    }
+
+    console.log(`Synthesizing OpenAPI path for ${endpoint.pathPattern}`);
+    openApiSpec.paths[endpoint.pathPattern] = createSyntheticPath(endpoint);
+  }
+}
+
+function createSharePointSiteDriveDeltaPathItem(endpoint) {
+  return {
+    get: {
+      operationId: endpoint.toolName,
+      summary: 'Track changes in a SharePoint site drive',
+      description:
+        'Synthetic OpenAPI path for the SharePoint site drive delta endpoint. The upstream Microsoft Graph OpenAPI document currently does not expose this path directly.',
+      parameters: [
+        {
+          name: 'site-id',
+          in: 'path',
+          required: true,
+          description: 'SharePoint site ID',
+          schema: {
+            type: 'string',
+          },
+        },
+        {
+          name: 'drive-id',
+          in: 'path',
+          required: true,
+          description: 'Drive ID within the SharePoint site',
+          schema: {
+            type: 'string',
+          },
+        },
+        {
+          name: 'token',
+          in: 'query',
+          required: false,
+          description:
+            'Optional delta token for incremental sync. Use latest to get the newest delta token without enumerating current content.',
+          schema: {
+            type: 'string',
+          },
+        },
+      ],
+      responses: {
+        200: {
+          description: 'Successful response',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                additionalProperties: true,
+                properties: {
+                  value: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      additionalProperties: true,
+                    },
+                  },
+                  '@odata.nextLink': {
+                    type: 'string',
+                  },
+                  '@odata.deltaLink': {
+                    type: 'string',
+                  },
+                },
+              },
+            },
+          },
+        },
+        default: {
+          description: 'Error response',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                additionalProperties: true,
+              },
+            },
+          },
+        },
+      },
+    },
+  };
 }
 
 function removeODataTypeRecursively(obj) {
