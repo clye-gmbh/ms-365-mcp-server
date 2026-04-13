@@ -207,7 +207,7 @@ get-channel-message, send-channel-message, list-team-members</sub>
 <sub>search-sharepoint-sites, get-sharepoint-site, get-sharepoint-site-by-path, list-sharepoint-site-drives,
 get-sharepoint-site-drive-by-id, list-sharepoint-site-items, get-sharepoint-site-item, list-sharepoint-site-lists,
 get-sharepoint-site-list, list-sharepoint-site-list-items, get-sharepoint-site-list-item, list-sharepoint-site-files,
-get-sharepoint-sites-delta</sub>
+get-sharepoint-sites-delta, get-site-drive-delta</sub>
 
 **Shared Mailboxes**  
 <sub>list-shared-mailbox-messages, list-shared-mailbox-folder-messages, get-shared-mailbox-message,

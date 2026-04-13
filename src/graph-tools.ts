@@ -347,6 +347,29 @@ interface ListSharePointSiteFilesOptions {
   pageSize?: number;
 }
 
+function buildSiteDriveDeltaEndpoint(siteId: string, driveId: string, delta?: string): string {
+  const baseEndpoint = `/sites/${encodeURIComponent(siteId)}/drives/${encodeURIComponent(
+    driveId
+  )}/root/delta`;
+
+  if (!delta) {
+    return baseEndpoint;
+  }
+
+  const trimmedDelta = delta.trim();
+  if (!trimmedDelta) {
+    return baseEndpoint;
+  }
+
+  if (/^https?:\/\//i.test(trimmedDelta)) {
+    const deltaUrl = new URL(trimmedDelta);
+    return deltaUrl.pathname.replace('/v1.0', '') + deltaUrl.search;
+  }
+
+  const escapedToken = encodeURIComponent(trimmedDelta).replace(/'/g, '%27');
+  return `${baseEndpoint}(token='${escapedToken}')`;
+}
+
 async function resolveSiteDrive(
   graphClient: GraphClient,
   siteId: string,
@@ -855,6 +878,84 @@ export function registerGraphTools(
   } catch (error) {
     logger.error(
       `Failed to register custom tool list-sharepoint-site-files: ${(error as Error).message}`
+    );
+    failedCount++;
+  }
+
+  // Register a custom convenience tool for SharePoint drive delta queries
+  try {
+    const siteDriveDeltaParamSchema = {
+      siteId: z.string().describe('SharePoint site ID that owns the document library / drive'),
+      driveId: z.string().describe('Drive ID (document library) inside the SharePoint site'),
+      delta: z
+        .string()
+        .describe(
+          'Optional delta token or full @odata.deltaLink/@odata.nextLink URL from a previous response. Use "latest" to get only the newest delta token without enumerating current content.'
+        )
+        .optional(),
+    };
+
+    server.tool(
+      'get-site-drive-delta',
+      'Run a SharePoint document library delta query via GET /sites/{siteId}/drives/{driveId}/root/delta. Returns changed items and preserves @odata.nextLink / @odata.deltaLink for incremental sync.',
+      siteDriveDeltaParamSchema,
+      {
+        title: 'get-site-drive-delta',
+        readOnlyHint: true,
+      },
+      async ({ siteId, driveId, delta }) => {
+        try {
+          const endpoint = buildSiteDriveDeltaEndpoint(siteId, driveId, delta);
+          logger.info(
+            `Running SharePoint drive delta query for siteId=${siteId}, driveId=${driveId}: ${endpoint}`
+          );
+
+          const rawResponse = await graphClient.makeRequest(endpoint, {
+            method: 'GET',
+          });
+
+          const result =
+            rawResponse && typeof rawResponse === 'object' && !Array.isArray(rawResponse)
+              ? {
+                  ...(rawResponse as Record<string, unknown>),
+                  nextLink: (rawResponse as Record<string, unknown>)['@odata.nextLink'],
+                  deltaLink: (rawResponse as Record<string, unknown>)['@odata.deltaLink'],
+                }
+              : {
+                  value: rawResponse,
+                };
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(result, null, 2),
+              },
+            ],
+            structuredContent: result,
+          };
+        } catch (error) {
+          const message = `Failed to get SharePoint site drive delta: ${(error as Error).message}`;
+          logger.error(message);
+          const structuredError: Record<string, unknown> = { error: message };
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify(structuredError),
+              },
+            ],
+            isError: true,
+            structuredContent: structuredError,
+          };
+        }
+      }
+    );
+
+    registeredCount++;
+  } catch (error) {
+    logger.error(
+      `Failed to register custom tool get-site-drive-delta: ${(error as Error).message}`
     );
     failedCount++;
   }
