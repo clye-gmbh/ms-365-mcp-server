@@ -16,7 +16,7 @@ vi.mock('../src/logger.js', () => ({
   },
 }));
 
-describe('get-site-drive-delta', () => {
+describe('get-sharepoint-site-drive-delta', () => {
   let mockServer: { tool: ReturnType<typeof vi.fn> };
   let graphClient: Pick<GraphClient, 'makeRequest'>;
 
@@ -42,7 +42,7 @@ describe('get-site-drive-delta', () => {
     registerGraphTools(mockServer as any, graphClient as GraphClient, false, undefined, true);
 
     const toolCall = mockServer.tool.mock.calls.find(
-      (call: unknown[]) => call[0] === 'get-site-drive-delta'
+      (call: unknown[]) => call[0] === 'get-sharepoint-site-drive-delta'
     );
     expect(toolCall).toBeTruthy();
     return toolCall?.[4];
@@ -52,7 +52,7 @@ describe('get-site-drive-delta', () => {
     registerGraphTools(mockServer as any, graphClient as GraphClient, false, undefined, true);
 
     const registeredTools = mockServer.tool.mock.calls.map((call: unknown[]) => call[0]);
-    expect(registeredTools).toContain('get-site-drive-delta');
+    expect(registeredTools).toContain('get-sharepoint-site-drive-delta');
   });
 
   it('calls the base delta endpoint when no delta token is provided', async () => {

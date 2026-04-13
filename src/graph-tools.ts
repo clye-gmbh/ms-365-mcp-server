@@ -1185,11 +1185,11 @@ export function registerGraphTools(
     };
 
     server.tool(
-      'get-site-drive-delta',
+      'get-sharepoint-site-drive-delta',
       'Run a SharePoint document library delta query via GET /sites/{siteId}/drives/{driveId}/root/delta. Returns changed items and preserves @odata.nextLink / @odata.deltaLink for incremental sync.',
       siteDriveDeltaParamSchema,
       {
-        title: 'get-site-drive-delta',
+        title: 'get-sharepoint-site-drive-delta',
         readOnlyHint: true,
       },
       async ({ siteId, driveId, delta }) => {
@@ -1244,7 +1244,7 @@ export function registerGraphTools(
     registeredCount++;
   } catch (error) {
     logger.error(
-      `Failed to register custom tool get-site-drive-delta: ${(error as Error).message}`
+      `Failed to register custom tool get-sharepoint-site-drive-delta: ${(error as Error).message}`
     );
     failedCount++;
   }
