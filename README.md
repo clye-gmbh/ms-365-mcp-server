@@ -7,6 +7,15 @@ Microsoft 365 MCP Server
 A Model Context Protocol (MCP) server for interacting with Microsoft 365 and Microsoft Office services through the Graph
 API.
 
+## Supported Clouds
+
+This server supports multiple Microsoft cloud environments:
+
+| Cloud                | Description                        | Auth Endpoint             | Graph API Endpoint              |
+| -------------------- | ---------------------------------- | ------------------------- | ------------------------------- |
+| **Global** (default) | International Microsoft 365        | login.microsoftonline.com | graph.microsoft.com             |
+| **China** (21Vianet) | Microsoft 365 operated by 21Vianet | login.chinacloudapi.cn    | microsoftgraph.chinacloudapi.cn |
+
 ## Prerequisites
 
 - Node.js >= 20 (recommended)
@@ -161,9 +170,10 @@ MS365_MCP_OUTPUT_FORMAT=toon npx @clye-gmbh/ms-365-mcp-server
 
 ### Personal Account Tools (Available by default)
 
-**Email (Outlook)**  
-<sub>list-mail-messages, list-mail-folders, list-mail-folder-messages, get-mail-message, send-mail,
-delete-mail-message, create-draft-email, move-mail-message</sub>
+**Email (Outlook)**
+<sub>list-mail-messages, list-mail-folders, list-mail-child-folders, list-mail-folder-messages, get-mail-message, send-mail,
+delete-mail-message, create-draft-email, move-mail-message, create-mail-folder, create-mail-child-folder,
+update-mail-folder, delete-mail-folder</sub>
 
 **Calendar**  
 <sub>list-calendars, list-calendar-events, get-calendar-event, get-calendar-view, create-calendar-event,
@@ -171,7 +181,7 @@ update-calendar-event, delete-calendar-event</sub>
 
 **OneDrive Files**  
 <sub>list-drives, get-drive-root-item, list-folder-files, download-onedrive-file-content, upload-file-content,
-upload-new-file, delete-onedrive-file</sub>
+delete-onedrive-file</sub>
 
 **Excel Operations**  
 <sub>list-excel-worksheets, get-excel-range, create-excel-chart, format-excel-range, sort-excel-range</sub>
@@ -198,10 +208,13 @@ delete-outlook-contact</sub>
 
 ### Organization Account Tools (Requires --org-mode flag)
 
-**Teams & Chats**  
+**Teams & Chats**
 <sub>list-chats, get-chat, list-chat-messages, get-chat-message, send-chat-message, list-chat-message-replies,
 reply-to-chat-message, list-joined-teams, get-team, list-team-channels, get-team-channel, list-channel-messages,
 get-channel-message, send-channel-message, list-team-members</sub>
+
+**Online Meetings & Transcripts**
+<sub>list-online-meetings, list-meeting-transcripts, get-meeting-transcript-content</sub>
 
 **SharePoint Sites**  
 <sub>search-sharepoint-sites, get-sharepoint-site, get-sharepoint-site-by-path, list-sharepoint-site-drives,
@@ -262,9 +275,9 @@ Test login in Claude Desktop:
 
 ### Claude Desktop
 
-To add this MCP server to Claude Desktop:
+To add this MCP server to Claude Desktop, edit the config file under Settings > Developer.
 
-Edit the config file under Settings > Developer:
+#### Personal Account (MSA)
 
 ```json
 {
@@ -279,14 +292,96 @@ Edit the config file under Settings > Developer:
 
 **Note**: If using GitHub Packages, make sure you've configured npm authentication (see [Installation](#installation) section above).
 
+#### Work/School Account (Global)
+
+```json
+{
+  "mcpServers": {
+    "ms365": {
+      "command": "npx",
+      "args": ["-y", "@clye-gmbh/ms-365-mcp-server", "--org-mode"]
+    }
+  }
+}
+```
+
+#### Work/School Account (China 21Vianet)
+
+```json
+{
+  "mcpServers": {
+    "ms365-china": {
+      "command": "npx",
+      "args": ["-y", "@clye-gmbh/ms-365-mcp-server", "--org-mode", "--cloud", "china"]
+    }
+  }
+}
+```
+
 ### Claude Code CLI
+
+#### Personal Account (MSA)
 
 ```bash
 claude mcp add ms365 -- npx -y @clye-gmbh/ms-365-mcp-server
 ```
 
+#### Work/School Account (Global)
+
+```bash
+# macOS/Linux
+claude mcp add ms365 -- npx -y @softeria/ms-365-mcp-server --org-mode
+
+# Windows (use cmd /c wrapper)
+claude mcp add ms365 -s user -- cmd /c "npx -y @softeria/ms-365-mcp-server --org-mode"
+```
+
+#### Work/School Account (China 21Vianet)
+
+```bash
+# macOS/Linux
+claude mcp add ms365-china -- npx -y @softeria/ms-365-mcp-server --org-mode --cloud china
+
+# Windows (use cmd /c wrapper)
+claude mcp add ms365-china -s user -- cmd /c "npx -y @softeria/ms-365-mcp-server --org-mode --cloud china"
+```
+
 For other interfaces that support MCPs, please refer to their respective documentation for the correct
 integration method.
+
+### Open WebUI
+
+Open WebUI supports MCP servers via HTTP transport with OAuth 2.1.
+
+1. Start the server with HTTP mode:
+
+   ```bash
+   npx @softeria/ms-365-mcp-server --http
+   ```
+
+2. In Open WebUI, go to **Admin Settings → Tools** (`/admin/settings/tools`) → **Add Connection**:
+   - **Type**: MCP Streamable HTTP
+   - **URL**: Your MCP server URL with `/mcp` path
+   - **Auth**: OAuth 2.1
+
+3. Click **Register Client**.
+
+> **Note**: Dynamic client registration is enabled by default in HTTP mode. Use `--no-dynamic-registration` to disable it. If using a custom Azure Entra app, add your redirect URI under "Mobile and desktop applications" platform (not "Single-page application").
+
+**Quick test setup** using the default Azure app (ID `ms-365` and `localhost:8080` are pre-configured):
+
+```bash
+docker run -d -p 8080:8080 \
+  -e WEBUI_AUTH=false \
+  -e OPENAI_API_KEY \
+  ghcr.io/open-webui/open-webui:main
+
+npx @softeria/ms-365-mcp-server --http
+```
+
+Then add connection with URL `http://localhost:3000/mcp` and ID `ms-365`.
+
+![Open WebUI MCP Connection](https://github.com/user-attachments/assets/dcab71dd-cf02-4bcb-b7db-5725d6be4064)
 
 ### Local Development
 
@@ -384,13 +479,13 @@ registration:
 4. **Get Credentials**:
 
 - Copy the **Application (client) ID** from Overview page
-- Go to Certificates & secrets → New client secret → Copy the secret value
+- Go to Certificates & secrets → New client secret → Copy the secret value (optional for public apps)
 
 5. **Configure Environment Variables**:
    Create a `.env` file in your project root:
    ```env
    MS365_MCP_CLIENT_ID=your-azure-ad-app-client-id-here
-   MS365_MCP_CLIENT_SECRET=your-azure-ad-app-client-secret-here
+   MS365_MCP_CLIENT_SECRET=your-secret-here  # Optional for public apps
    MS365_MCP_TENANT_ID=common
    ```
 
@@ -416,6 +511,43 @@ This method:
 > **Authentication Tools**: In HTTP mode, login/logout tools are disabled by default since OAuth handles authentication.
 > Use `--enable-auth-tools` if you need them available.
 
+## Multi-Account Support
+
+Use a single server instance to serve multiple Microsoft accounts. When more than one account is logged in, an `account` parameter is automatically injected into every tool, allowing you to specify which account to use per tool call.
+
+**Login multiple accounts** (one-time per account):
+
+```bash
+# Login first account (device code flow)
+npx @softeria/ms-365-mcp-server --login
+# Follow the device code prompt, sign in as personal@outlook.com
+
+# Login second account
+npx @softeria/ms-365-mcp-server --login
+# Follow the device code prompt, sign in as work@company.com
+```
+
+**List configured accounts:**
+
+```bash
+npx @softeria/ms-365-mcp-server --list-accounts
+```
+
+**Use in tool calls:** Pass `"account": "work@company.com"` in any tool request:
+
+```json
+{ "tool": "list-mail-messages", "arguments": { "account": "work@company.com" } }
+```
+
+**Behavior:**
+
+- With a **single account** configured, it auto-selects (no `account` parameter needed).
+- With **multiple accounts** and no `account` parameter, the server uses the selected default or returns a helpful error listing available accounts.
+- **100% backward compatible**: existing single-account setups work unchanged.
+- The `account` parameter accepts email address (e.g. `user@outlook.com`) or MSAL `homeAccountId`.
+
+> **For MCP multiplexers (Legate, Governor):** Multi-account mode replaces the N-process pattern. Instead of spawning one server per account, a single instance handles all accounts via the `account` parameter, reducing tool duplication from N×110 to 110.
+
 ## Tool Presets
 
 To reduce initial connection overhead, use preset tool categories instead of loading all 90+ tools:
@@ -440,6 +572,7 @@ The following options can be used when running ms-365-mcp-server directly from t
 --org-mode        Enable organization/work mode from start (includes Teams, SharePoint, etc.)
 --work-mode       Alias for --org-mode
 --force-work-scopes Backwards compatibility alias for --org-mode (deprecated)
+--cloud <type>    Microsoft cloud environment: global (default) or china (21Vianet)
 ```
 
 ### Server Options
@@ -452,6 +585,7 @@ When running as an MCP server, the following options can be used:
 --http [port]     Use Streamable HTTP transport instead of stdio (optionally specify port, default: 3000)
                   Starts Express.js server with MCP endpoint at /mcp
 --enable-auth-tools Enable login/logout tools when using HTTP mode (disabled by default in HTTP mode)
+--no-dynamic-registration Disable OAuth Dynamic Client Registration (enabled by default in HTTP mode)
 --enabled-tools <pattern> Filter tools using regex pattern (e.g., "excel|contact" to enable Excel and Contact tools)
 --preset <names>  Use preset tool categories (comma-separated). See "Tool Presets" section above
 --list-presets    List all available presets and exit
@@ -466,11 +600,100 @@ Environment variables:
 - `MS365_MCP_ORG_MODE=true|1`: Enable organization/work mode (alternative to --org-mode flag)
 - `MS365_MCP_FORCE_WORK_SCOPES=true|1`: Backwards compatibility for MS365_MCP_ORG_MODE
 - `MS365_MCP_OUTPUT_FORMAT=toon`: Enable TOON output format (alternative to --toon flag)
+- `MS365_MCP_BODY_FORMAT=html`: Return email bodies as HTML instead of plain text (default: text)
+- `MS365_MCP_CLOUD_TYPE=global|china`: Microsoft cloud environment (alternative to --cloud flag)
 - `LOG_LEVEL`: Set logging level (default: 'info')
 - `SILENT=true|1`: Disable console output
 - `MS365_MCP_CLIENT_ID`: Custom Azure app client ID (defaults to built-in app)
 - `MS365_MCP_TENANT_ID`: Custom tenant ID (defaults to 'common' for multi-tenant)
 - `MS365_MCP_OAUTH_TOKEN`: Pre-existing OAuth token for Microsoft Graph API (BYOT method)
+- `MS365_MCP_KEYVAULT_URL`: Azure Key Vault URL for secrets management (see Azure Key Vault section)
+- `MS365_MCP_TOKEN_CACHE_PATH`: Custom file path for MSAL token cache (see Token Storage below)
+- `MS365_MCP_SELECTED_ACCOUNT_PATH`: Custom file path for selected account metadata (see Token Storage below)
+
+## Token Storage
+
+Authentication tokens are stored using the OS credential store (via keytar) when available. If keytar is not installed or fails (common on headless Linux), the server falls back to file-based storage.
+
+**Default fallback paths** are relative to the installed package directory. This means tokens can be lost when the package is reinstalled or updated via npm.
+
+To persist tokens across updates, set custom paths outside the package directory:
+
+```bash
+export MS365_MCP_TOKEN_CACHE_PATH="$HOME/.config/ms365-mcp/.token-cache.json"
+export MS365_MCP_SELECTED_ACCOUNT_PATH="$HOME/.config/ms365-mcp/.selected-account.json"
+```
+
+Parent directories are created automatically. Files are written with `0600` permissions.
+
+> **Security note**: File-based token storage writes sensitive credentials to disk. Ensure the chosen directory has appropriate access controls. The OS credential store (keytar) is preferred when available.
+
+## Azure Key Vault Integration
+
+For production deployments, you can store secrets in Azure Key Vault instead of environment variables. This is particularly useful for Azure Container Apps with managed identity.
+
+### Setup
+
+1. **Create a Key Vault** (if you don't have one):
+
+   ```bash
+   az keyvault create --name your-keyvault-name --resource-group your-rg --location eastus
+   ```
+
+2. **Add secrets to Key Vault**:
+
+   ```bash
+   az keyvault secret set --vault-name your-keyvault-name --name ms365-mcp-client-id --value "your-client-id"
+   az keyvault secret set --vault-name your-keyvault-name --name ms365-mcp-tenant-id --value "your-tenant-id"
+   # Optional: if using confidential client flow
+   az keyvault secret set --vault-name your-keyvault-name --name ms365-mcp-client-secret --value "your-secret"
+   ```
+
+3. **Grant access to Key Vault**:
+
+   For Azure Container Apps with managed identity:
+
+   ```bash
+   # Get the managed identity principal ID
+   PRINCIPAL_ID=$(az containerapp show --name your-app --resource-group your-rg --query identity.principalId -o tsv)
+
+   # Grant access to Key Vault secrets
+   az keyvault set-policy --name your-keyvault-name --object-id $PRINCIPAL_ID --secret-permissions get list
+   ```
+
+   For local development with Azure CLI:
+
+   ```bash
+   # Your Azure CLI identity already has access if you have appropriate RBAC roles
+   az login
+   ```
+
+4. **Configure the server**:
+   ```bash
+   MS365_MCP_KEYVAULT_URL=https://your-keyvault-name.vault.azure.net npx @softeria/ms-365-mcp-server
+   ```
+
+### Secret Name Mapping
+
+| Key Vault Secret Name   | Environment Variable    | Required                  |
+| ----------------------- | ----------------------- | ------------------------- |
+| ms365-mcp-client-id     | MS365_MCP_CLIENT_ID     | Yes                       |
+| ms365-mcp-tenant-id     | MS365_MCP_TENANT_ID     | No (defaults to 'common') |
+| ms365-mcp-client-secret | MS365_MCP_CLIENT_SECRET | No                        |
+
+### Authentication
+
+The Key Vault integration uses `DefaultAzureCredential` from the Azure Identity SDK, which automatically tries multiple authentication methods in order:
+
+1. Environment variables (AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID)
+2. Managed Identity (recommended for Azure Container Apps)
+3. Azure CLI credentials (for local development)
+4. Visual Studio Code credentials
+5. Azure PowerShell credentials
+
+### Optional Dependencies
+
+The Azure Key Vault packages (`@azure/identity` and `@azure/keyvault-secrets`) are optional dependencies. They are only loaded when `MS365_MCP_KEYVAULT_URL` is configured. If you don't use Key Vault, these packages are not required.
 
 ## Publishing
 
@@ -523,4 +746,4 @@ If you're having problems or need help:
 
 ## License
 
-MIT © 2025 Softeria
+MIT © 2026 Softeria

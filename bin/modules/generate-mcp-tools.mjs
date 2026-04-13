@@ -28,14 +28,28 @@ export function generateMcpTools(openApiSpec, outputDir) {
     let clientCode = fs.readFileSync(clientFilePath, 'utf-8');
     clientCode = clientCode.replace(/'@zodios\/core';/, "'./hack.js';");
 
-    clientCode = clientCode.replace(
-      /const microsoft_graph_attachment = z\s+\.object\({[\s\S]*?}\)\s+\.strict\(\);/,
-      (match) => match.replace(/\.strict\(\);/, '.passthrough();')
-    );
+    clientCode = clientCode.replace(/\.strict\(\)/g, '.passthrough()');
 
     console.log('Stripping unused errors arrays from endpoint definitions...');
     // I didn't make up this crazy regex myself; you know who did. It seems works though.
     clientCode = clientCode.replace(/,?\s*errors:\s*\[[\s\S]*?],?(?=\s*})/g, '');
+
+    console.log('Decoding HTML entities in path patterns...');
+    // openapi-zod-client HTML-encodes special characters in path patterns
+    // This breaks Microsoft Graph function-style APIs like range(address='A1:G10')
+    clientCode = clientCode.replace(/&#x3D;/g, '='); // Decode = sign
+    clientCode = clientCode.replace(/&#x27;/g, "'"); // Decode single quote
+    clientCode = clientCode.replace(/&#x28;/g, '('); // Decode left paren
+    clientCode = clientCode.replace(/&#x29;/g, ')'); // Decode right paren
+    clientCode = clientCode.replace(/&#x3A;/g, ':'); // Decode colon
+
+    console.log('Fixing function-style API paths with template literals...');
+    // After HTML decoding, paths like range(address=':address') have nested single quotes
+    // which cause TypeScript syntax errors. Convert the path string from single quotes
+    // to backticks (template literal) so single quotes can remain inside.
+    // Match: path: '/...range(param=':value')...',
+    // Replace with: path: `/...range(param=':value')...`,
+    clientCode = clientCode.replace(/(path:\s*)'(\/[^']*\([^)]*=':[\w]+'\)[^']*)'/g, '$1`$2`');
 
     fs.writeFileSync(clientFilePath, clientCode);
 

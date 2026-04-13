@@ -3,7 +3,6 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import express, { Request, Response } from 'express';
-import crypto from 'crypto';
 import logger, { enableConsoleLogging } from './logger.js';
 import { registerAuthTools } from './auth-tools.js';
 import { registerGraphTools, registerDiscoveryTools } from './graph-tools.js';
@@ -16,62 +15,117 @@ import {
   refreshAccessToken,
 } from './lib/microsoft-auth.js';
 import type { CommandOptions } from './cli.ts';
+import { getSecrets, type AppSecrets } from './secrets.js';
+import { getCloudEndpoints } from './cloud-config.js';
+import { requestContext } from './request-context.js';
 
-// Store registered clients in memory (in production, use a database)
-interface RegisteredClient {
-  client_id: string;
-  client_name: string;
-  redirect_uris: string[];
-  grant_types: string[];
-  response_types: string[];
-  scope?: string;
-  token_endpoint_auth_method: string;
-  created_at: number;
+/**
+ * Parse HTTP option into host and port components.
+ * Supports formats: "host:port", ":port", "port"
+ * @param httpOption - The HTTP option value (string or boolean)
+ * @returns Object with host (undefined if not specified) and port number
+ */
+function parseHttpOption(httpOption: string | boolean): { host: string | undefined; port: number } {
+  if (typeof httpOption === 'boolean') {
+    return { host: undefined, port: 3000 };
+  }
+
+  const httpString = httpOption.trim();
+
+  // Check if it contains a colon (host:port format)
+  if (httpString.includes(':')) {
+    const [hostPart, portPart] = httpString.split(':');
+    const host = hostPart || undefined; // Empty string becomes undefined
+    const port = parseInt(portPart) || 3000;
+    return { host, port };
+  }
+
+  // No colon, treat as port only
+  const port = parseInt(httpString) || 3000;
+  return { host: undefined, port };
 }
-
-const registeredClients = new Map<string, RegisteredClient>();
 
 class MicrosoftGraphServer {
   private authManager: AuthManager;
   private options: CommandOptions;
-  private graphClient: GraphClient;
+  private graphClient: GraphClient | null;
   private server: McpServer | null;
+  private secrets: AppSecrets | null;
+  private version: string = '0.0.0';
+  private multiAccount: boolean = false;
+  private accountNames: string[] = [];
 
   constructor(authManager: AuthManager, options: CommandOptions = {}) {
     this.authManager = authManager;
     this.options = options;
-    const outputFormat = options.toon ? 'toon' : 'json';
-    this.graphClient = new GraphClient(authManager, outputFormat);
+    this.graphClient = null; // Initialized in start() after secrets are loaded
     this.server = null;
+    this.secrets = null;
   }
 
-  async initialize(version: string): Promise<void> {
-    this.server = new McpServer({
+  private createMcpServer(): McpServer {
+    const server = new McpServer({
       name: 'Microsoft365MCP',
-      version,
+      version: this.version,
     });
 
     const shouldRegisterAuthTools = !this.options.http || this.options.enableAuthTools;
     if (shouldRegisterAuthTools) {
-      registerAuthTools(this.server, this.authManager);
+      registerAuthTools(server, this.authManager);
+    }
+
+    if (this.options.discovery) {
+      registerDiscoveryTools(
+        server,
+        this.graphClient!,
+        this.options.readOnly,
+        this.options.orgMode,
+        this.authManager,
+        this.multiAccount
+      );
+    } else {
+      registerGraphTools(
+        server,
+        this.graphClient!,
+        this.options.readOnly,
+        this.options.enabledTools,
+        this.options.orgMode,
+        this.authManager,
+        this.multiAccount,
+        this.accountNames
+      );
+    }
+
+    return server;
+  }
+
+  async initialize(version: string): Promise<void> {
+    this.secrets = await getSecrets();
+    this.version = version;
+
+    // Detect multi-account mode and cache account names for schema enum
+    try {
+      this.multiAccount = await this.authManager.isMultiAccount();
+      if (this.multiAccount) {
+        const accounts = await this.authManager.listAccounts();
+        this.accountNames = accounts.map((a) => a.username).filter((u): u is string => !!u);
+        logger.info(
+          `Multi-account mode detected (${this.accountNames.length} accounts): "account" parameter will be injected into all tool schemas`
+        );
+      }
+    } catch (err) {
+      logger.warn(`Failed to detect multi-account mode: ${(err as Error).message}`);
+    }
+
+    const outputFormat = this.options.toon ? 'toon' : 'json';
+    this.graphClient = new GraphClient(this.authManager, this.secrets, outputFormat);
+
+    if (!this.options.http) {
+      this.server = this.createMcpServer();
     }
 
     if (this.options.discovery) {
       logger.info('Discovery mode enabled (experimental) - registering discovery tool only');
-      registerDiscoveryTools(
-        this.server,
-        this.graphClient,
-        this.options.readOnly,
-        this.options.orgMode
-      );
-    } else {
-      registerGraphTools(
-        this.server,
-        this.graphClient,
-        this.options.readOnly,
-        this.options.enabledTools,
-        this.options.orgMode
-      );
     }
   }
 
@@ -82,15 +136,11 @@ class MicrosoftGraphServer {
 
     logger.info('Microsoft 365 MCP Server starting...');
 
-    // Debug: Check if environment variables are loaded
-    logger.info('Environment Variables Check:', {
-      CLIENT_ID: process.env.MS365_MCP_CLIENT_ID
-        ? `${process.env.MS365_MCP_CLIENT_ID.substring(0, 8)}...`
-        : 'NOT SET',
-      CLIENT_SECRET: process.env.MS365_MCP_CLIENT_SECRET
-        ? `${process.env.MS365_MCP_CLIENT_SECRET.substring(0, 8)}...`
-        : 'NOT SET',
-      TENANT_ID: process.env.MS365_MCP_TENANT_ID || 'NOT SET',
+    // Debug: Check if secrets are loaded
+    logger.info('Secrets Check:', {
+      CLIENT_ID: this.secrets?.clientId ? `${this.secrets.clientId.substring(0, 8)}...` : 'NOT SET',
+      CLIENT_SECRET: this.secrets?.clientSecret ? 'SET' : 'NOT SET',
+      TENANT_ID: this.secrets?.tenantId || 'NOT SET',
       NODE_ENV: process.env.NODE_ENV || 'NOT SET',
     });
 
@@ -99,7 +149,7 @@ class MicrosoftGraphServer {
     }
 
     if (this.options.http) {
-      const port = typeof this.options.http === 'string' ? parseInt(this.options.http) : 3000;
+      const { host, port } = parseHttpOption(this.options.http);
 
       const app = express();
       app.set('trust proxy', true);
@@ -107,8 +157,9 @@ class MicrosoftGraphServer {
       app.use(express.urlencoded({ extended: true }));
 
       // Add CORS headers for all routes
+      const corsOrigin = process.env.MS365_MCP_CORS_ORIGIN || '*';
       app.use((req, res, next) => {
-        res.header('Access-Control-Allow-Origin', '*');
+        res.header('Access-Control-Allow-Origin', corsOrigin);
         res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
         res.header(
           'Access-Control-Allow-Headers',
@@ -124,7 +175,7 @@ class MicrosoftGraphServer {
         next();
       });
 
-      const oauthProvider = new MicrosoftOAuthProvider(this.authManager);
+      const oauthProvider = new MicrosoftOAuthProvider(this.authManager, this.secrets!);
 
       // OAuth Authorization Server Discovery
       app.get('/.well-known/oauth-authorization-server', async (req, res) => {
@@ -133,18 +184,23 @@ class MicrosoftGraphServer {
 
         const scopes = buildScopesFromEndpoints(this.options.orgMode, this.options.enabledTools);
 
-        res.json({
+        const metadata: Record<string, unknown> = {
           issuer: url.origin,
           authorization_endpoint: `${url.origin}/authorize`,
           token_endpoint: `${url.origin}/token`,
-          registration_endpoint: `${url.origin}/register`,
           response_types_supported: ['code'],
           response_modes_supported: ['query'],
           grant_types_supported: ['authorization_code', 'refresh_token'],
           token_endpoint_auth_methods_supported: ['none'],
           code_challenge_methods_supported: ['S256'],
           scopes_supported: scopes,
-        });
+        };
+
+        if (this.options.enableDynamicRegistration) {
+          metadata.registration_endpoint = `${url.origin}/register`;
+        }
+
+        res.json(metadata);
       });
 
       // OAuth Protected Resource Discovery
@@ -163,44 +219,33 @@ class MicrosoftGraphServer {
         });
       });
 
-      // Dynamic Client Registration endpoint
-      app.post('/register', async (req, res) => {
-        const body = req.body;
+      if (this.options.enableDynamicRegistration) {
+        app.post('/register', async (req, res) => {
+          const body = req.body;
+          logger.info('Client registration request', { body });
 
-        // Generate a client ID
-        const clientId = crypto.randomUUID();
+          const clientId = `mcp-client-${Date.now()}`;
 
-        // Store the client registration
-        registeredClients.set(clientId, {
-          client_id: clientId,
-          client_name: body.client_name || 'MCP Client',
-          redirect_uris: body.redirect_uris || [],
-          grant_types: body.grant_types || ['authorization_code', 'refresh_token'],
-          response_types: body.response_types || ['code'],
-          scope: body.scope,
-          token_endpoint_auth_method: 'none',
-          created_at: Date.now(),
+          res.status(201).json({
+            client_id: clientId,
+            client_id_issued_at: Math.floor(Date.now() / 1000),
+            redirect_uris: body.redirect_uris || [],
+            grant_types: body.grant_types || ['authorization_code', 'refresh_token'],
+            response_types: body.response_types || ['code'],
+            token_endpoint_auth_method: body.token_endpoint_auth_method || 'none',
+            client_name: body.client_name || 'MCP Client',
+          });
         });
-
-        // Return the client registration response
-        res.status(201).json({
-          client_id: clientId,
-          client_name: body.client_name || 'MCP Client',
-          redirect_uris: body.redirect_uris || [],
-          grant_types: body.grant_types || ['authorization_code', 'refresh_token'],
-          response_types: body.response_types || ['code'],
-          scope: body.scope,
-          token_endpoint_auth_method: 'none',
-        });
-      });
+      }
 
       // Authorization endpoint - redirects to Microsoft
       app.get('/authorize', async (req, res) => {
         const url = new URL(req.url!, `${req.protocol}://${req.get('host')}`);
-        const tenantId = process.env.MS365_MCP_TENANT_ID || 'common';
-        const clientId = process.env.MS365_MCP_CLIENT_ID || '084a3e9f-a9f4-43f7-89f9-d229cf97853e';
+        const tenantId = this.secrets?.tenantId || 'common';
+        const clientId = this.secrets!.clientId;
+        const cloudEndpoints = getCloudEndpoints(this.secrets!.cloudType);
         const microsoftAuthUrl = new URL(
-          `https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/authorize`
+          `${cloudEndpoints.authority}/${tenantId}/oauth2/v2.0/authorize`
         );
 
         // Only forward parameters that Microsoft OAuth 2.0 v2.0 supports
@@ -239,15 +284,12 @@ class MicrosoftGraphServer {
       // Token exchange endpoint
       app.post('/token', async (req, res) => {
         try {
-          // Comprehensive debugging
+          // Log token endpoint call (redact sensitive data)
           logger.info('Token endpoint called', {
             method: req.method,
             url: req.url,
-            headers: req.headers,
-            bodyType: typeof req.body,
-            body: req.body,
-            rawBody: JSON.stringify(req.body),
             contentType: req.get('Content-Type'),
+            grant_type: req.body?.grant_type,
           });
 
           const body = req.body;
@@ -272,19 +314,18 @@ class MicrosoftGraphServer {
           }
 
           if (body.grant_type === 'authorization_code') {
-            const tenantId = process.env.MS365_MCP_TENANT_ID || 'common';
-            const clientId =
-              process.env.MS365_MCP_CLIENT_ID || '084a3e9f-a9f4-43f7-89f9-d229cf97853e';
-            const clientSecret = process.env.MS365_MCP_CLIENT_SECRET;
+            const tenantId = this.secrets?.tenantId || 'common';
+            const clientId = this.secrets!.clientId;
+            const clientSecret = this.secrets?.clientSecret;
 
-            if (!clientSecret) {
-              logger.error('Token endpoint: MS365_MCP_CLIENT_SECRET is not configured');
-              res.status(500).json({
-                error: 'server_error',
-                error_description: 'Server configuration error',
-              });
-              return;
-            }
+            logger.info('Token endpoint: authorization_code exchange', {
+              redirect_uri: body.redirect_uri,
+              has_code: !!body.code,
+              has_code_verifier: !!body.code_verifier,
+              clientId,
+              tenantId,
+              hasClientSecret: !!clientSecret,
+            });
 
             const result = await exchangeCodeForToken(
               body.code as string,
@@ -292,29 +333,28 @@ class MicrosoftGraphServer {
               clientId,
               clientSecret,
               tenantId,
-              body.code_verifier as string | undefined
+              body.code_verifier as string | undefined,
+              this.secrets!.cloudType
             );
             res.json(result);
           } else if (body.grant_type === 'refresh_token') {
-            const tenantId = process.env.MS365_MCP_TENANT_ID || 'common';
-            const clientId =
-              process.env.MS365_MCP_CLIENT_ID || '084a3e9f-a9f4-43f7-89f9-d229cf97853e';
-            const clientSecret = process.env.MS365_MCP_CLIENT_SECRET;
+            const tenantId = this.secrets?.tenantId || 'common';
+            const clientId = this.secrets!.clientId;
+            const clientSecret = this.secrets?.clientSecret;
 
-            if (!clientSecret) {
-              logger.error('Token endpoint: MS365_MCP_CLIENT_SECRET is not configured');
-              res.status(500).json({
-                error: 'server_error',
-                error_description: 'Server configuration error',
-              });
-              return;
+            // Log whether using public or confidential client
+            if (clientSecret) {
+              logger.info('Refresh endpoint: Using confidential client with client_secret');
+            } else {
+              logger.info('Refresh endpoint: Using public client without client_secret');
             }
 
             const result = await refreshAccessToken(
               body.refresh_token as string,
               clientId,
               clientSecret,
-              tenantId
+              tenantId,
+              this.secrets!.cloudType
             );
             res.json(result);
           } else {
@@ -348,25 +388,33 @@ class MicrosoftGraphServer {
           req: Request & { microsoftAuth?: { accessToken: string; refreshToken: string } },
           res: Response
         ) => {
-          try {
-            // Set OAuth tokens in the GraphClient if available
-            if (req.microsoftAuth) {
-              this.graphClient.setOAuthTokens(
-                req.microsoftAuth.accessToken,
-                req.microsoftAuth.refreshToken
-              );
-            }
-
+          const handler = async () => {
+            const server = this.createMcpServer();
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: undefined, // Stateless mode
             });
 
             res.on('close', () => {
               transport.close();
+              server.close();
             });
 
-            await this.server!.connect(transport);
+            await server.connect(transport);
             await transport.handleRequest(req as any, res as any, undefined);
+          };
+
+          try {
+            if (req.microsoftAuth) {
+              await requestContext.run(
+                {
+                  accessToken: req.microsoftAuth.accessToken,
+                  refreshToken: req.microsoftAuth.refreshToken,
+                },
+                handler
+              );
+            } else {
+              await handler();
+            }
           } catch (error) {
             logger.error('Error handling MCP GET request:', error);
             if (!res.headersSent) {
@@ -390,25 +438,33 @@ class MicrosoftGraphServer {
           req: Request & { microsoftAuth?: { accessToken: string; refreshToken: string } },
           res: Response
         ) => {
-          try {
-            // Set OAuth tokens in the GraphClient if available
-            if (req.microsoftAuth) {
-              this.graphClient.setOAuthTokens(
-                req.microsoftAuth.accessToken,
-                req.microsoftAuth.refreshToken
-              );
-            }
-
+          const handler = async () => {
+            const server = this.createMcpServer();
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: undefined, // Stateless mode
             });
 
             res.on('close', () => {
               transport.close();
+              server.close();
             });
 
-            await this.server!.connect(transport);
+            await server.connect(transport);
             await transport.handleRequest(req as any, res as any, req.body);
+          };
+
+          try {
+            if (req.microsoftAuth) {
+              await requestContext.run(
+                {
+                  accessToken: req.microsoftAuth.accessToken,
+                  refreshToken: req.microsoftAuth.refreshToken,
+                },
+                handler
+              );
+            } else {
+              await handler();
+            }
           } catch (error) {
             logger.error('Error handling MCP POST request:', error);
             if (!res.headersSent) {
@@ -430,14 +486,25 @@ class MicrosoftGraphServer {
         res.send('Microsoft 365 MCP Server is running');
       });
 
-      app.listen(port, () => {
-        logger.info(`Server listening on HTTP port ${port}`);
-        logger.info(`  - MCP endpoint: http://localhost:${port}/mcp`);
-        logger.info(`  - OAuth endpoints: http://localhost:${port}/auth/*`);
-        logger.info(
-          `  - OAuth discovery: http://localhost:${port}/.well-known/oauth-authorization-server`
-        );
-      });
+      if (host) {
+        app.listen(port, host, () => {
+          logger.info(`Server listening on ${host}:${port}`);
+          logger.info(`  - MCP endpoint: http://${host}:${port}/mcp`);
+          logger.info(`  - OAuth endpoints: http://${host}:${port}/auth/*`);
+          logger.info(
+            `  - OAuth discovery: http://${host}:${port}/.well-known/oauth-authorization-server`
+          );
+        });
+      } else {
+        app.listen(port, () => {
+          logger.info(`Server listening on all interfaces (0.0.0.0:${port})`);
+          logger.info(`  - MCP endpoint: http://localhost:${port}/mcp`);
+          logger.info(`  - OAuth endpoints: http://localhost:${port}/auth/*`);
+          logger.info(
+            `  - OAuth discovery: http://localhost:${port}/.well-known/oauth-authorization-server`
+          );
+        });
+      }
     } else {
       const transport = new StdioServerTransport();
       await this.server!.connect(transport);

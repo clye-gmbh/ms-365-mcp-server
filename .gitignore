@@ -139,6 +139,7 @@ dist
 
 # Token cache files
 .token-cache.json
+.selected-account.json
 
 openapi
 
@@ -155,3 +156,6 @@ CLAUDE.md
 # MCP configuration (contains sensitive keys)
 .mcp.json
 downloads/*
+
+# Finder metadata files
+.DS_Store

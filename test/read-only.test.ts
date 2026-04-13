@@ -71,10 +71,14 @@ describe('Read-Only Mode', () => {
 
     registerGraphTools(mockServer, {} as GraphClient, options.readOnly);
 
-    expect(mockServer.tool).toHaveBeenCalledTimes(1);
+    // 1 GET endpoint + 1 parse-teams-url + 2 fork convenience tools
+    expect(mockServer.tool).toHaveBeenCalledTimes(4);
 
     const toolCalls = mockServer.tool.mock.calls.map((call: unknown[]) => call[0]);
     expect(toolCalls).toContain('list-mail-messages');
+    expect(toolCalls).toContain('parse-teams-url');
+    expect(toolCalls).toContain('list-sharepoint-site-files');
+    expect(toolCalls).toContain('download-file-to-local');
     expect(toolCalls).not.toContain('send-mail');
     expect(toolCalls).not.toContain('delete-mail-message');
   });
@@ -87,11 +91,14 @@ describe('Read-Only Mode', () => {
 
     registerGraphTools(mockServer, {} as GraphClient, options.readOnly);
 
-    expect(mockServer.tool).toHaveBeenCalledTimes(3);
+    // 3 mocked endpoints + 1 parse-teams-url + 2 fork convenience tools
+    expect(mockServer.tool).toHaveBeenCalledTimes(6);
 
     const toolCalls = mockServer.tool.mock.calls.map((call: unknown[]) => call[0]);
     expect(toolCalls).toContain('list-mail-messages');
     expect(toolCalls).toContain('send-mail');
     expect(toolCalls).toContain('delete-mail-message');
+    expect(toolCalls).toContain('list-sharepoint-site-files');
+    expect(toolCalls).toContain('download-file-to-local');
   });
 });

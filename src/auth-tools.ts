@@ -105,78 +105,77 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
     };
   });
 
-  server.tool('list-accounts', 'List all available Microsoft accounts', {}, async () => {
-    try {
-      const accounts = await authManager.listAccounts();
-      const selectedAccountId = authManager.getSelectedAccountId();
-      const result = accounts.map((account) => ({
-        id: account.homeAccountId,
-        username: account.username,
-        name: account.name,
-        selected: account.homeAccountId === selectedAccountId,
-      }));
+  server.tool(
+    'list-accounts',
+    'List all Microsoft accounts configured in this server. Use this to discover available account emails before making tool calls. Reflects accounts added mid-session via --login.',
+    {},
+    {
+      title: 'list-accounts',
+      readOnlyHint: true,
+      openWorldHint: false,
+    },
+    async () => {
+      try {
+        const accounts = await authManager.listAccounts();
+        const selectedAccountId = authManager.getSelectedAccountId();
+        const result = accounts.map((account) => ({
+          email: account.username || 'unknown',
+          name: account.name,
+          isDefault: account.homeAccountId === selectedAccountId,
+        }));
 
-      const structured: Record<string, unknown> = { accounts: result };
+        const structured: Record<string, unknown> = {
+          accounts: result,
+          count: result.length,
+          tip: "Pass the 'email' value as the 'account' parameter in any tool call to target a specific account.",
+        };
 
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(structured),
-          },
-        ],
-        structuredContent: structured,
-      };
-    } catch (error) {
-      const structured = {
-        error: `Failed to list accounts: ${(error as Error).message}`,
-      };
-      return {
-        content: [
-          {
-            type: 'text',
-            text: JSON.stringify(structured),
-          },
-        ],
-        structuredContent: structured,
-      };
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(structured),
+            },
+          ],
+          structuredContent: structured,
+        };
+      } catch (error) {
+        const structured: Record<string, unknown> = {
+          error: `Failed to list accounts: ${(error as Error).message}`,
+        };
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(structured),
+            },
+          ],
+          structuredContent: structured,
+          isError: true,
+        };
+      }
     }
-  });
+  );
 
   server.tool(
     'select-account',
-    'Select a specific Microsoft account to use',
+    'Select a Microsoft account as the default. Accepts email address (e.g. user@outlook.com) or account ID. Use list-accounts to discover available accounts.',
     {
-      accountId: z.string().describe('The account ID to select'),
+      account: z.string().describe('Email address or account ID of the account to select'),
     },
-    async ({ accountId }) => {
+    async ({ account }) => {
       try {
-        const success = await authManager.selectAccount(accountId);
-        if (success) {
-          const structured: Record<string, unknown> = { message: `Selected account: ${accountId}` };
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(structured),
-              },
-            ],
-            structuredContent: structured,
-          };
-        } else {
-          const structured: Record<string, unknown> = {
-            error: `Account not found: ${accountId}`,
-          };
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(structured),
-              },
-            ],
-            structuredContent: structured,
-          };
-        }
+        await authManager.selectAccount(account);
+        const structured: Record<string, unknown> = { message: `Selected account: ${account}` };
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(structured),
+            },
+          ],
+          structuredContent: structured,
+        };
       } catch (error) {
         const structured: Record<string, unknown> = {
           error: `Failed to select account: ${(error as Error).message}`,
@@ -189,6 +188,7 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
             },
           ],
           structuredContent: structured,
+          isError: true,
         };
       }
     }
@@ -196,29 +196,16 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
 
   server.tool(
     'remove-account',
-    'Remove a Microsoft account from the cache',
+    'Remove a Microsoft account from the cache. Accepts email address (e.g. user@outlook.com) or account ID. Use list-accounts to discover available accounts.',
     {
-      accountId: z.string().describe('The account ID to remove'),
+      account: z.string().describe('Email address or account ID of the account to remove'),
     },
-    async ({ accountId }) => {
+    async ({ account }) => {
       try {
-        const success = await authManager.removeAccount(accountId);
+        const success = await authManager.removeAccount(account);
         if (success) {
           const structured: Record<string, unknown> = {
-            message: `Removed account: ${accountId}`,
-          };
-          return {
-            content: [
-              {
-                type: 'text',
-                text: JSON.stringify(structured),
-              },
-            ],
-            structuredContent: structured,
-          };
-        } else {
-          const structured: Record<string, unknown> = {
-            error: `Account not found: ${accountId}`,
+            message: `Removed account: ${account}`,
           };
           return {
             content: [
@@ -230,6 +217,19 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
             structuredContent: structured,
           };
         }
+        const structured: Record<string, unknown> = {
+          error: `Failed to remove account from cache: ${account}`,
+        };
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify(structured),
+            },
+          ],
+          structuredContent: structured,
+          isError: true,
+        };
       } catch (error) {
         const structured: Record<string, unknown> = {
           error: `Failed to remove account: ${(error as Error).message}`,
@@ -242,6 +242,7 @@ export function registerAuthTools(server: McpServer, authManager: AuthManager): 
             },
           ],
           structuredContent: structured,
+          isError: true,
         };
       }
     }

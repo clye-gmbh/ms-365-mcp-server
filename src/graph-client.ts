@@ -2,6 +2,9 @@ import logger from './logger.js';
 import AuthManager from './auth.js';
 import { refreshAccessToken } from './lib/microsoft-auth.js';
 import { encode as toonEncode } from '@toon-format/toon';
+import type { AppSecrets } from './secrets.js';
+import { getCloudEndpoints } from './cloud-config.js';
+import { getRequestTokens } from './request-context.js';
 
 interface GraphRequestOptions {
   headers?: Record<string, string>;
@@ -40,25 +43,24 @@ interface McpResponse {
 
 class GraphClient {
   private authManager: AuthManager;
-  private accessToken: string | null = null;
-  private refreshToken: string | null = null;
+  private secrets: AppSecrets;
   private readonly outputFormat: 'json' | 'toon' = 'json';
 
-  constructor(authManager: AuthManager, outputFormat: 'json' | 'toon' = 'json') {
+  constructor(
+    authManager: AuthManager,
+    secrets: AppSecrets,
+    outputFormat: 'json' | 'toon' = 'json'
+  ) {
     this.authManager = authManager;
+    this.secrets = secrets;
     this.outputFormat = outputFormat;
   }
 
-  setOAuthTokens(accessToken: string, refreshToken?: string): void {
-    this.accessToken = accessToken;
-    this.refreshToken = refreshToken || null;
-  }
-
   async makeRequest(endpoint: string, options: GraphRequestOptions = {}): Promise<unknown> {
-    // Use OAuth tokens if available, otherwise fall back to authManager
+    const contextTokens = getRequestTokens();
     let accessToken =
-      options.accessToken || this.accessToken || (await this.authManager.getToken());
-    let refreshToken = options.refreshToken || this.refreshToken;
+      options.accessToken ?? contextTokens?.accessToken ?? (await this.authManager.getToken());
+    const refreshToken = options.refreshToken ?? contextTokens?.refreshToken;
 
     if (!accessToken) {
       throw new Error('No access token available');
@@ -69,13 +71,8 @@ class GraphClient {
 
       if (response.status === 401 && refreshToken) {
         // Token expired, try to refresh
-        await this.refreshAccessToken(refreshToken);
-
-        // Update token for retry
-        accessToken = this.accessToken || accessToken;
-        if (!accessToken) {
-          throw new Error('Failed to refresh access token');
-        }
+        const newTokens = await this.refreshAccessToken(refreshToken);
+        accessToken = newTokens.accessToken;
 
         // Retry the request with new token
         response = await this.performRequest(endpoint, accessToken, options);
@@ -138,10 +135,10 @@ class GraphClient {
    * want to persist the data on disk instead of parsing it as JSON.
    */
   async downloadBinary(endpoint: string, options: GraphRequestOptions = {}): Promise<Buffer> {
-    // Use OAuth tokens if available, otherwise fall back to authManager
+    const contextTokens = getRequestTokens();
     let accessToken =
-      options.accessToken || this.accessToken || (await this.authManager.getToken());
-    let refreshToken = options.refreshToken || this.refreshToken;
+      options.accessToken ?? contextTokens?.accessToken ?? (await this.authManager.getToken());
+    let refreshToken = options.refreshToken ?? contextTokens?.refreshToken;
 
     if (!accessToken) {
       throw new Error('No access token available');
@@ -151,16 +148,8 @@ class GraphClient {
       let response = await this.performRequest(endpoint, accessToken, options);
 
       if (response.status === 401 && refreshToken) {
-        // Token expired, try to refresh
-        await this.refreshAccessToken(refreshToken);
-
-        // Update token for retry
-        accessToken = this.accessToken || accessToken;
-        if (!accessToken) {
-          throw new Error('Failed to refresh access token');
-        }
-
-        // Retry the request with new token
+        const newTokens = await this.refreshAccessToken(refreshToken);
+        accessToken = newTokens.accessToken;
         response = await this.performRequest(endpoint, accessToken, options);
       }
 
@@ -190,20 +179,32 @@ class GraphClient {
     }
   }
 
-  private async refreshAccessToken(refreshToken: string): Promise<void> {
-    const tenantId = process.env.MS365_MCP_TENANT_ID || 'common';
-    const clientId = process.env.MS365_MCP_CLIENT_ID || '084a3e9f-a9f4-43f7-89f9-d229cf97853e';
-    const clientSecret = process.env.MS365_MCP_CLIENT_SECRET;
+  private async refreshAccessToken(
+    refreshToken: string
+  ): Promise<{ accessToken: string; refreshToken?: string }> {
+    const tenantId = this.secrets.tenantId || 'common';
+    const clientId = this.secrets.clientId;
+    const clientSecret = this.secrets.clientSecret;
 
-    if (!clientSecret) {
-      throw new Error('MS365_MCP_CLIENT_SECRET not configured');
+    // Log whether using public or confidential client
+    if (clientSecret) {
+      logger.info('GraphClient: Refreshing token with confidential client');
+    } else {
+      logger.info('GraphClient: Refreshing token with public client');
     }
 
-    const response = await refreshAccessToken(refreshToken, clientId, clientSecret, tenantId);
-    this.accessToken = response.access_token;
-    if (response.refresh_token) {
-      this.refreshToken = response.refresh_token;
-    }
+    const response = await refreshAccessToken(
+      refreshToken,
+      clientId,
+      clientSecret,
+      tenantId,
+      this.secrets.cloudType
+    );
+
+    return {
+      accessToken: response.access_token,
+      refreshToken: response.refresh_token,
+    };
   }
 
   private async performRequest(
@@ -211,7 +212,10 @@ class GraphClient {
     accessToken: string,
     options: GraphRequestOptions
   ): Promise<Response> {
-    const url = `https://graph.microsoft.com/v1.0${endpoint}`;
+    const cloudEndpoints = getCloudEndpoints(this.secrets.cloudType);
+    const url = `${cloudEndpoints.graphApi}/v1.0${endpoint}`;
+
+    logger.info(`[GRAPH CLIENT] Final URL being sent to Microsoft: ${url}`);
 
     const headers: Record<string, string> = {
       Authorization: `Bearer ${accessToken}`,
@@ -314,7 +318,7 @@ class GraphClient {
       const removeODataProps = (obj: Record<string, unknown>): void => {
         if (typeof obj === 'object' && obj !== null) {
           Object.keys(obj).forEach((key) => {
-            if (key.startsWith('@odata.')) {
+            if (key.startsWith('@odata.') && key !== '@odata.nextLink') {
               delete obj[key];
             } else if (typeof obj[key] === 'object') {
               removeODataProps(obj[key] as Record<string, unknown>);
@@ -354,7 +358,7 @@ class GraphClient {
     const removeODataProps = (obj: Record<string, unknown>): void => {
       if (typeof obj === 'object' && obj !== null) {
         Object.keys(obj).forEach((key) => {
-          if (key.startsWith('@odata.')) {
+          if (key.startsWith('@odata.') && key !== '@odata.nextLink') {
             delete obj[key];
           } else if (typeof obj[key] === 'object') {
             removeODataProps(obj[key] as Record<string, unknown>);

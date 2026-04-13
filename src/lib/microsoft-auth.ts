@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from 'express';
 import logger from '../logger.js';
+import { getCloudEndpoints, type CloudType } from '../cloud-config.js';
 
 /**
  * Microsoft Bearer Token Auth Middleware validates that the request has a valid Microsoft access token
@@ -41,9 +42,10 @@ export async function exchangeCodeForToken(
   code: string,
   redirectUri: string,
   clientId: string,
-  clientSecret: string,
+  clientSecret: string | undefined,
   tenantId: string = 'common',
-  codeVerifier?: string
+  codeVerifier?: string,
+  cloudType: CloudType = 'global'
 ): Promise<{
   access_token: string;
   token_type: string;
@@ -51,20 +53,25 @@ export async function exchangeCodeForToken(
   expires_in: number;
   refresh_token: string;
 }> {
+  const cloudEndpoints = getCloudEndpoints(cloudType);
   const params = new URLSearchParams({
     grant_type: 'authorization_code',
     code,
     redirect_uri: redirectUri,
     client_id: clientId,
-    client_secret: clientSecret,
   });
+
+  // Add client_secret for confidential clients
+  if (clientSecret) {
+    params.append('client_secret', clientSecret);
+  }
 
   // Add code_verifier for PKCE flow
   if (codeVerifier) {
     params.append('code_verifier', codeVerifier);
   }
 
-  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+  const response = await fetch(`${cloudEndpoints.authority}/${tenantId}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
@@ -87,8 +94,9 @@ export async function exchangeCodeForToken(
 export async function refreshAccessToken(
   refreshToken: string,
   clientId: string,
-  clientSecret: string,
-  tenantId: string = 'common'
+  clientSecret: string | undefined,
+  tenantId: string = 'common',
+  cloudType: CloudType = 'global'
 ): Promise<{
   access_token: string;
   token_type: string;
@@ -96,17 +104,23 @@ export async function refreshAccessToken(
   expires_in: number;
   refresh_token?: string;
 }> {
-  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+  const cloudEndpoints = getCloudEndpoints(cloudType);
+  const params = new URLSearchParams({
+    grant_type: 'refresh_token',
+    refresh_token: refreshToken,
+    client_id: clientId,
+  });
+
+  if (clientSecret) {
+    params.append('client_secret', clientSecret);
+  }
+
+  const response = await fetch(`${cloudEndpoints.authority}/${tenantId}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',
     },
-    body: new URLSearchParams({
-      grant_type: 'refresh_token',
-      refresh_token: refreshToken,
-      client_id: clientId,
-      client_secret: clientSecret,
-    }),
+    body: params,
   });
 
   if (!response.ok) {
@@ -128,18 +142,19 @@ export async function getClientCredentialsAccessToken(
   clientId: string,
   clientSecret: string,
   tenantId: string = 'common',
-  scope?: string
+  scope?: string,
+  cloudType: CloudType = 'global'
 ): Promise<{
   access_token: string;
   token_type: string;
   expires_in: number;
   scope?: string;
 }> {
-  // Default to Microsoft Graph .default scope which maps to the app's configured permissions
+  const cloudEndpoints = getCloudEndpoints(cloudType);
   const effectiveScope =
-    scope && scope.trim().length > 0 ? scope : 'https://graph.microsoft.com/.default';
+    scope && scope.trim().length > 0 ? scope : `${cloudEndpoints.graphApi}/.default`;
 
-  const response = await fetch(`https://login.microsoftonline.com/${tenantId}/oauth2/v2.0/token`, {
+  const response = await fetch(`${cloudEndpoints.authority}/${tenantId}/oauth2/v2.0/token`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/x-www-form-urlencoded',

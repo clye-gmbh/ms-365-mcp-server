@@ -5,6 +5,8 @@ import fs, { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { getClientCredentialsAccessToken } from './lib/microsoft-auth.js';
+import { getSecrets, type AppSecrets } from './secrets.js';
+import { getCloudEndpoints, getDefaultClientId, type CloudType } from './cloud-config.js';
 
 // Ok so this is a hack to lazily import keytar only when needed
 // since --http mode may not need it at all, and keytar can be a pain to install (looking at you alpine)
@@ -49,15 +51,91 @@ const SERVICE_NAME = 'ms-365-mcp-server';
 const TOKEN_CACHE_ACCOUNT = 'msal-token-cache';
 const SELECTED_ACCOUNT_KEY = 'selected-account';
 const FALLBACK_DIR = path.dirname(fileURLToPath(import.meta.url));
-const FALLBACK_PATH = path.join(FALLBACK_DIR, '..', '.token-cache.json');
-const SELECTED_ACCOUNT_PATH = path.join(FALLBACK_DIR, '..', '.selected-account.json');
+const DEFAULT_TOKEN_CACHE_PATH = path.join(FALLBACK_DIR, '..', '.token-cache.json');
+const DEFAULT_SELECTED_ACCOUNT_PATH = path.join(FALLBACK_DIR, '..', '.selected-account.json');
 
-const DEFAULT_CONFIG: Configuration = {
-  auth: {
-    clientId: process.env.MS365_MCP_CLIENT_ID || '084a3e9f-a9f4-43f7-89f9-d229cf97853e',
-    authority: `https://login.microsoftonline.com/${process.env.MS365_MCP_TENANT_ID || 'common'}`,
-  },
-};
+/**
+ * Returns the token cache file path.
+ * Uses MS365_MCP_TOKEN_CACHE_PATH env var if set, otherwise the default fallback.
+ */
+function getTokenCachePath(): string {
+  const envPath = process.env.MS365_MCP_TOKEN_CACHE_PATH?.trim();
+  return envPath || DEFAULT_TOKEN_CACHE_PATH;
+}
+
+/**
+ * Returns the selected-account file path.
+ * Uses MS365_MCP_SELECTED_ACCOUNT_PATH env var if set, otherwise the default fallback.
+ */
+function getSelectedAccountPath(): string {
+  const envPath = process.env.MS365_MCP_SELECTED_ACCOUNT_PATH?.trim();
+  return envPath || DEFAULT_SELECTED_ACCOUNT_PATH;
+}
+
+/**
+ * Ensures the parent directory of a file path exists, creating it recursively if needed.
+ */
+function ensureParentDir(filePath: string): void {
+  const dir = path.dirname(filePath);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+}
+
+function wrapCache(data: string): string {
+  return JSON.stringify({ _cacheEnvelope: true, data, savedAt: Date.now() });
+}
+
+function unwrapCache(raw: string): { data: string; savedAt?: number } {
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed._cacheEnvelope && typeof parsed.data === 'string') {
+      return { data: parsed.data, savedAt: parsed.savedAt };
+    }
+  } catch {
+    // not our envelope format
+  }
+  return { data: raw };
+}
+
+function pickNewest(
+  keytarRaw: string | undefined,
+  fileRaw: string | undefined
+): string | undefined {
+  if (!keytarRaw && !fileRaw) return undefined;
+  if (keytarRaw && !fileRaw) return unwrapCache(keytarRaw).data;
+  if (!keytarRaw && fileRaw) return unwrapCache(fileRaw).data;
+
+  const kt = unwrapCache(keytarRaw!);
+  const file = unwrapCache(fileRaw!);
+
+  if (kt.savedAt === undefined && file.savedAt === undefined) return kt.data;
+  if (kt.savedAt !== undefined && file.savedAt === undefined) return kt.data;
+  if (kt.savedAt === undefined && file.savedAt !== undefined) return file.data;
+  return kt.savedAt! >= file.savedAt! ? kt.data : file.data;
+}
+
+/**
+ * Creates MSAL configuration from secrets.
+ * This is called during AuthManager initialization.
+ */
+function createMsalConfig(secrets: AppSecrets): Configuration {
+  const cloudEndpoints = getCloudEndpoints(secrets.cloudType);
+  return {
+    auth: {
+      clientId: secrets.clientId || getDefaultClientId(secrets.cloudType),
+      authority: `${cloudEndpoints.authority}/${secrets.tenantId || 'common'}`,
+    },
+  };
+}
+
+function tenantIdFromAuthority(authority?: string): string | undefined {
+  if (!authority) return undefined;
+  try {
+    const segment = new URL(authority).pathname.replace(/^\//, '').split('/')[0];
+    return segment || undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 interface ScopeHierarchy {
   [key: string]: string[];
@@ -112,10 +190,13 @@ function buildScopesFromEndpoints(
     }
   });
 
+  // Scope hierarchy: if we have BOTH a higher scope (ReadWrite) AND lower scopes (Read),
+  // keep only the higher scope since it includes the permissions of the lower scopes.
+  // Do NOT upgrade Read to ReadWrite if we only have Read scopes.
   Object.entries(SCOPE_HIERARCHY).forEach(([higherScope, lowerScopes]) => {
-    if (lowerScopes.every((scope) => scopesSet.has(scope))) {
+    if (scopesSet.has(higherScope) && lowerScopes.every((scope) => scopesSet.has(scope))) {
+      // We have both ReadWrite and Read, so remove the redundant Read scope
       lowerScopes.forEach((scope) => scopesSet.delete(scope));
-      scopesSet.add(higherScope);
     }
   });
 
@@ -148,10 +229,13 @@ class AuthManager {
   private clientCredentialsAccessToken: string | null;
   private clientCredentialsExpiry: number | null;
   private selectedAccountId: string | null;
+  private readonly resolvedClientSecret?: string;
+  private readonly cloudType: CloudType;
 
   constructor(
-    config: Configuration = DEFAULT_CONFIG,
-    scopes: string[] = buildScopesFromEndpoints()
+    config: Configuration,
+    scopes: string[] = buildScopesFromEndpoints(),
+    options?: { clientSecret?: string; cloudType?: CloudType }
   ) {
     logger.info(`And scopes are ${scopes.join(', ')}`, scopes);
     this.config = config;
@@ -162,6 +246,8 @@ class AuthManager {
     this.clientCredentialsAccessToken = null;
     this.clientCredentialsExpiry = null;
     this.selectedAccountId = null;
+    this.resolvedClientSecret = options?.clientSecret;
+    this.cloudType = options?.cloudType ?? 'global';
 
     const oauthTokenFromEnv = process.env.MS365_MCP_OAUTH_TOKEN;
     this.oauthToken = oauthTokenFromEnv ?? null;
@@ -174,28 +260,38 @@ class AuthManager {
     this.isClientCredentialsMode = !this.isOAuthMode && authMode === 'client_credentials';
   }
 
+  /**
+   * Creates an AuthManager instance with secrets loaded from the configured provider.
+   * Uses Key Vault if MS365_MCP_KEYVAULT_URL is set, otherwise environment variables.
+   */
+  static async create(scopes: string[] = buildScopesFromEndpoints()): Promise<AuthManager> {
+    const secrets = await getSecrets();
+    const config = createMsalConfig(secrets);
+    return new AuthManager(config, scopes, {
+      clientSecret: secrets.clientSecret,
+      cloudType: secrets.cloudType,
+    });
+  }
+
   async loadTokenCache(): Promise<void> {
     try {
-      let cacheData: string | undefined;
-
+      let keytarRaw: string | undefined;
       try {
         const kt = await getKeytar();
         if (kt) {
-          const cachedData = await kt.getPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT);
-          if (cachedData) {
-            cacheData = cachedData;
-          }
+          keytarRaw = (await kt.getPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT)) ?? undefined;
         }
       } catch (keytarError) {
-        logger.warn(
-          `Keychain access failed, falling back to file storage: ${(keytarError as Error).message}`
-        );
+        logger.warn(`Keychain access failed: ${(keytarError as Error).message}`);
       }
 
-      if (!cacheData && existsSync(FALLBACK_PATH)) {
-        cacheData = readFileSync(FALLBACK_PATH, 'utf8');
+      let fileRaw: string | undefined;
+      const cachePath = getTokenCachePath();
+      if (existsSync(cachePath)) {
+        fileRaw = readFileSync(cachePath, 'utf8');
       }
 
+      const cacheData = pickNewest(keytarRaw, fileRaw);
       if (cacheData) {
         this.msalApp.getTokenCache().deserialize(cacheData);
       }
@@ -209,26 +305,25 @@ class AuthManager {
 
   private async loadSelectedAccount(): Promise<void> {
     try {
-      let selectedAccountData: string | undefined;
-
+      let keytarRaw: string | undefined;
       try {
         const kt = await getKeytar();
         if (kt) {
-          const cachedData = await kt.getPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY);
-          if (cachedData) {
-            selectedAccountData = cachedData;
-          }
+          keytarRaw = (await kt.getPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY)) ?? undefined;
         }
       } catch (keytarError) {
         logger.warn(
-          `Keychain access failed for selected account, falling back to file storage: ${(keytarError as Error).message}`
+          `Keychain access failed for selected account: ${(keytarError as Error).message}`
         );
       }
 
-      if (!selectedAccountData && existsSync(SELECTED_ACCOUNT_PATH)) {
-        selectedAccountData = readFileSync(SELECTED_ACCOUNT_PATH, 'utf8');
+      let fileRaw: string | undefined;
+      const accountPath = getSelectedAccountPath();
+      if (existsSync(accountPath)) {
+        fileRaw = readFileSync(accountPath, 'utf8');
       }
 
+      const selectedAccountData = pickNewest(keytarRaw, fileRaw);
       if (selectedAccountData) {
         const parsed = JSON.parse(selectedAccountData);
         this.selectedAccountId = parsed.accountId;
@@ -241,21 +336,25 @@ class AuthManager {
 
   async saveTokenCache(): Promise<void> {
     try {
-      const cacheData = this.msalApp.getTokenCache().serialize();
+      const stamped = wrapCache(this.msalApp.getTokenCache().serialize());
 
       try {
         const kt = await getKeytar();
         if (kt) {
-          await kt.setPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT, cacheData);
+          await kt.setPassword(SERVICE_NAME, TOKEN_CACHE_ACCOUNT, stamped);
         } else {
-          fs.writeFileSync(FALLBACK_PATH, cacheData);
+          const cachePath = getTokenCachePath();
+          ensureParentDir(cachePath);
+          fs.writeFileSync(cachePath, stamped, { mode: 0o600 });
         }
       } catch (keytarError) {
         logger.warn(
           `Keychain save failed, falling back to file storage: ${(keytarError as Error).message}`
         );
 
-        fs.writeFileSync(FALLBACK_PATH, cacheData);
+        const cachePath = getTokenCachePath();
+        ensureParentDir(cachePath);
+        fs.writeFileSync(cachePath, stamped, { mode: 0o600 });
       }
     } catch (error) {
       logger.error(`Error saving token cache: ${(error as Error).message}`);
@@ -264,21 +363,25 @@ class AuthManager {
 
   private async saveSelectedAccount(): Promise<void> {
     try {
-      const selectedAccountData = JSON.stringify({ accountId: this.selectedAccountId });
+      const stamped = wrapCache(JSON.stringify({ accountId: this.selectedAccountId }));
 
       try {
         const kt = await getKeytar();
         if (kt) {
-          await kt.setPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY, selectedAccountData);
+          await kt.setPassword(SERVICE_NAME, SELECTED_ACCOUNT_KEY, stamped);
         } else {
-          fs.writeFileSync(SELECTED_ACCOUNT_PATH, selectedAccountData);
+          const accountPath = getSelectedAccountPath();
+          ensureParentDir(accountPath);
+          fs.writeFileSync(accountPath, stamped, { mode: 0o600 });
         }
       } catch (keytarError) {
         logger.warn(
           `Keychain save failed for selected account, falling back to file storage: ${(keytarError as Error).message}`
         );
 
-        fs.writeFileSync(SELECTED_ACCOUNT_PATH, selectedAccountData);
+        const accountPath = getSelectedAccountPath();
+        ensureParentDir(accountPath);
+        fs.writeFileSync(accountPath, stamped, { mode: 0o600 });
       }
     } catch (error) {
       logger.error(`Error saving selected account: ${(error as Error).message}`);
@@ -309,9 +412,12 @@ class AuthManager {
         return this.clientCredentialsAccessToken;
       }
 
-      const tenantId = process.env.MS365_MCP_TENANT_ID || 'common';
-      const clientId = process.env.MS365_MCP_CLIENT_ID || DEFAULT_CONFIG.auth!.clientId!;
-      const clientSecret = process.env.MS365_MCP_CLIENT_SECRET;
+      const tenantId =
+        process.env.MS365_MCP_TENANT_ID ||
+        tenantIdFromAuthority(this.config.auth?.authority) ||
+        'common';
+      const clientId = process.env.MS365_MCP_CLIENT_ID || this.config.auth!.clientId!;
+      const clientSecret = process.env.MS365_MCP_CLIENT_SECRET || this.resolvedClientSecret;
 
       if (!clientSecret) {
         throw new Error('MS365_MCP_CLIENT_SECRET not configured for client credentials mode');
@@ -323,7 +429,8 @@ class AuthManager {
         clientId,
         clientSecret,
         tenantId,
-        scopeOverride
+        scopeOverride,
+        this.cloudType
       );
 
       this.clientCredentialsAccessToken = tokenResponse.access_token;
@@ -353,6 +460,7 @@ class AuthManager {
         const response = await this.msalApp.acquireTokenSilent(silentRequest);
         this.accessToken = response.accessToken;
         this.tokenExpiry = response.expiresOn ? new Date(response.expiresOn).getTime() : null;
+        await this.saveTokenCache();
         return this.accessToken;
       } catch {
         logger.error('Silent token acquisition failed');
@@ -459,11 +567,11 @@ class AuthManager {
       logger.info('Token retrieved successfully, testing Graph API access...');
 
       try {
-        // In client credentials (app-only) mode, /me is not available.
-        // Instead, test access by calling a SharePoint sites endpoint.
+        const secrets = await getSecrets();
+        const cloudEndpoints = getCloudEndpoints(secrets.cloudType);
         const testEndpoint = this.isClientCredentialsMode
-          ? 'https://graph.microsoft.com/v1.0/sites?top=1'
-          : 'https://graph.microsoft.com/v1.0/me';
+          ? `${cloudEndpoints.graphApi}/v1.0/sites?top=1`
+          : `${cloudEndpoints.graphApi}/v1.0/me`;
 
         const response = await fetch(testEndpoint, {
           headers: {
@@ -536,12 +644,14 @@ class AuthManager {
         logger.warn(`Keychain deletion failed: ${(keytarError as Error).message}`);
       }
 
-      if (fs.existsSync(FALLBACK_PATH)) {
-        fs.unlinkSync(FALLBACK_PATH);
+      const cachePath = getTokenCachePath();
+      if (fs.existsSync(cachePath)) {
+        fs.unlinkSync(cachePath);
       }
 
-      if (fs.existsSync(SELECTED_ACCOUNT_PATH)) {
-        fs.unlinkSync(SELECTED_ACCOUNT_PATH);
+      const accountPath = getSelectedAccountPath();
+      if (fs.existsSync(accountPath)) {
+        fs.unlinkSync(accountPath);
       }
 
       return true;
@@ -556,50 +666,38 @@ class AuthManager {
     return await this.msalApp.getTokenCache().getAllAccounts();
   }
 
-  async selectAccount(accountId: string): Promise<boolean> {
-    const accounts = await this.listAccounts();
-    const account = accounts.find((acc: AccountInfo) => acc.homeAccountId === accountId);
+  async selectAccount(identifier: string): Promise<boolean> {
+    const account = await this.resolveAccount(identifier);
 
-    if (!account) {
-      logger.error(`Account with ID ${accountId} not found`);
-      return false;
-    }
-
-    this.selectedAccountId = accountId;
+    this.selectedAccountId = account.homeAccountId;
     await this.saveSelectedAccount();
 
     // Clear cached tokens to force refresh with new account
     this.accessToken = null;
     this.tokenExpiry = null;
 
-    logger.info(`Selected account: ${account.username} (${accountId})`);
+    logger.info(`Selected account: ${account.username} (${account.homeAccountId})`);
     return true;
   }
 
-  async removeAccount(accountId: string): Promise<boolean> {
-    const accounts = await this.listAccounts();
-    const account = accounts.find((acc: AccountInfo) => acc.homeAccountId === accountId);
-
-    if (!account) {
-      logger.error(`Account with ID ${accountId} not found`);
-      return false;
-    }
+  async removeAccount(identifier: string): Promise<boolean> {
+    const account = await this.resolveAccount(identifier);
 
     try {
       await this.msalApp.getTokenCache().removeAccount(account);
 
       // If this was the selected account, clear the selection
-      if (this.selectedAccountId === accountId) {
+      if (this.selectedAccountId === account.homeAccountId) {
         this.selectedAccountId = null;
         await this.saveSelectedAccount();
         this.accessToken = null;
         this.tokenExpiry = null;
       }
 
-      logger.info(`Removed account: ${account.username} (${accountId})`);
+      logger.info(`Removed account: ${account.username} (${account.homeAccountId})`);
       return true;
     } catch (error) {
-      logger.error(`Failed to remove account ${accountId}: ${(error as Error).message}`);
+      logger.error(`Failed to remove account ${identifier}: ${(error as Error).message}`);
       return false;
     }
   }
@@ -607,7 +705,133 @@ class AuthManager {
   getSelectedAccountId(): string | null {
     return this.selectedAccountId;
   }
+
+  /**
+   * Returns true if auth is in OAuth/HTTP mode (token supplied via env or setOAuthToken).
+   * In this mode, account resolution should be skipped — the request context drives token selection.
+   */
+  isOAuthModeEnabled(): boolean {
+    return this.isOAuthMode;
+  }
+
+  /**
+   * Resolves an account by identifier (email or homeAccountId).
+   * Resolution: username match (case-insensitive) → homeAccountId match → throw.
+   */
+  async resolveAccount(identifier: string): Promise<AccountInfo> {
+    const accounts = await this.msalApp.getTokenCache().getAllAccounts();
+
+    if (accounts.length === 0) {
+      throw new Error('No accounts found. Please login first.');
+    }
+
+    const lowerIdentifier = identifier.toLowerCase();
+
+    // Try username (email) match first
+    let account =
+      accounts.find((a: AccountInfo) => a.username?.toLowerCase() === lowerIdentifier) ?? null;
+
+    // Fall back to homeAccountId match
+    if (!account) {
+      account = accounts.find((a: AccountInfo) => a.homeAccountId === identifier) ?? null;
+    }
+
+    if (!account) {
+      const availableAccounts = accounts
+        .map((a: AccountInfo) => a.username || a.name || 'unknown')
+        .join(', ');
+      throw new Error(
+        `Account '${identifier}' not found. Available accounts: ${availableAccounts}`
+      );
+    }
+
+    return account;
+  }
+
+  /**
+   * Returns true if the MSAL cache contains more than one account.
+   * Used to decide whether to inject the `account` parameter into tool schemas.
+   */
+  async isMultiAccount(): Promise<boolean> {
+    const accounts = await this.msalApp.getTokenCache().getAllAccounts();
+    return accounts.length > 1;
+  }
+
+  /**
+   * Acquires a token for a specific account identified by username (email) or homeAccountId,
+   * WITHOUT changing the persisted selectedAccountId.
+   *
+   * Resolution order:
+   *  1. Exact match on username (case-insensitive)
+   *  2. Exact match on homeAccountId
+   *  3. If identifier is empty/undefined AND only 1 account exists → auto-select
+   *  4. If identifier is empty/undefined AND multiple accounts → use selectedAccountId or throw
+   *
+   * @returns The access token string.
+   */
+  async getTokenForAccount(identifier?: string): Promise<string> {
+    if (this.isOAuthMode && this.oauthToken) {
+      return this.oauthToken;
+    }
+
+    let targetAccount: AccountInfo | null = null;
+
+    if (identifier) {
+      // resolveAccount handles empty-cache check internally
+      targetAccount = await this.resolveAccount(identifier);
+    } else {
+      const accounts = await this.msalApp.getTokenCache().getAllAccounts();
+
+      if (accounts.length === 0) {
+        throw new Error('No accounts found. Please login first.');
+      }
+      // No identifier provided
+      if (accounts.length === 1) {
+        targetAccount = accounts[0];
+      } else {
+        // Multiple accounts: resolve by explicit selectedAccountId only — never fall back to accounts[0].
+        // getCurrentAccount() has backward-compat fallback to first account which is unsafe for multi-account routing.
+        if (this.selectedAccountId) {
+          targetAccount =
+            accounts.find((a: AccountInfo) => a.homeAccountId === this.selectedAccountId) ?? null;
+        }
+        if (!targetAccount) {
+          const availableAccounts = accounts
+            .map((a: AccountInfo) => a.username || a.name || 'unknown')
+            .join(', ');
+          throw new Error(
+            `Multiple accounts configured but no 'account' parameter provided and no default selected. ` +
+              `Available accounts: ${availableAccounts}. ` +
+              `Pass account="<email>" in your tool call or use select-account to set a default.`
+          );
+        }
+      }
+    }
+
+    const silentRequest = {
+      account: targetAccount,
+      scopes: this.scopes,
+    };
+
+    try {
+      const response = await this.msalApp.acquireTokenSilent(silentRequest);
+      await this.saveTokenCache();
+      return response.accessToken;
+    } catch {
+      throw new Error(
+        `Failed to acquire token for account '${targetAccount.username || targetAccount.name || 'unknown'}'. ` +
+          `The token may have expired. Please re-login with: --login`
+      );
+    }
+  }
 }
 
 export default AuthManager;
-export { buildScopesFromEndpoints };
+export {
+  buildScopesFromEndpoints,
+  getTokenCachePath,
+  getSelectedAccountPath,
+  wrapCache,
+  unwrapCache,
+  pickNewest,
+};
