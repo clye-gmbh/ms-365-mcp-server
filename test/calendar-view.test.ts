@@ -139,9 +139,12 @@ describe('Calendar View Tools', () => {
         const toolName = call[0] as string;
         // Skip utility / fork tools that are not generated Graph GET endpoints
         if (
-          ['parse-teams-url', 'list-sharepoint-site-files', 'download-file-to-local'].includes(
-            toolName
-          )
+          [
+            'parse-teams-url',
+            'list-sharepoint-site-files',
+            'download-file-to-local',
+            'get-file-data-url',
+          ].includes(toolName)
         ) {
           continue;
         }

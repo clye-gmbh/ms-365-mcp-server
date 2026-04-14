@@ -71,14 +71,15 @@ describe('Read-Only Mode', () => {
 
     registerGraphTools(mockServer, {} as GraphClient, options.readOnly);
 
-    // 1 GET endpoint + 1 parse-teams-url + 2 fork convenience tools
-    expect(mockServer.tool).toHaveBeenCalledTimes(4);
+    // 1 GET endpoint + 1 parse-teams-url + 3 convenience tools
+    expect(mockServer.tool).toHaveBeenCalledTimes(5);
 
     const toolCalls = mockServer.tool.mock.calls.map((call: unknown[]) => call[0]);
     expect(toolCalls).toContain('list-mail-messages');
     expect(toolCalls).toContain('parse-teams-url');
     expect(toolCalls).toContain('list-sharepoint-site-files');
     expect(toolCalls).toContain('download-file-to-local');
+    expect(toolCalls).toContain('get-file-data-url');
     expect(toolCalls).not.toContain('send-mail');
     expect(toolCalls).not.toContain('delete-mail-message');
   });
@@ -91,8 +92,8 @@ describe('Read-Only Mode', () => {
 
     registerGraphTools(mockServer, {} as GraphClient, options.readOnly);
 
-    // 3 mocked endpoints + 1 parse-teams-url + 2 fork convenience tools
-    expect(mockServer.tool).toHaveBeenCalledTimes(6);
+    // 3 mocked endpoints + 1 parse-teams-url + 3 convenience tools
+    expect(mockServer.tool).toHaveBeenCalledTimes(7);
 
     const toolCalls = mockServer.tool.mock.calls.map((call: unknown[]) => call[0]);
     expect(toolCalls).toContain('list-mail-messages');
@@ -100,5 +101,6 @@ describe('Read-Only Mode', () => {
     expect(toolCalls).toContain('delete-mail-message');
     expect(toolCalls).toContain('list-sharepoint-site-files');
     expect(toolCalls).toContain('download-file-to-local');
+    expect(toolCalls).toContain('get-file-data-url');
   });
 });

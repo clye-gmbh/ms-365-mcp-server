@@ -486,6 +486,7 @@ interface ListSharePointSiteFilesOptions {
 const CUSTOM_TOOL_ALIASES = new Set([
   'get-sharepoint-site-drive-delta',
   'get-sharepoint-site-delta',
+  'get-file-data-url',
 ]);
 
 function buildSiteDriveDeltaEndpoint(siteId: string, driveId: string, delta?: string): string {
@@ -1537,6 +1538,114 @@ export function registerGraphTools(
       `Failed to register custom tool download-file-to-local: ${(error as Error).message}`
     );
     failedCount++;
+  }
+
+  // Register a custom convenience tool to return file content as data URL
+  if (!enabledToolsRegex || enabledToolsRegex.test('get-file-data-url')) {
+    try {
+      const dataUrlParamSchema = {
+        driveId: z
+          .string()
+          .describe('Drive ID of the OneDrive or SharePoint document library containing the file'),
+        driveItemId: z
+          .string()
+          .describe('Item ID of the file to fetch as data URL (from list-folder-files or delta)'),
+        maxBytes: z
+          .number()
+          .describe(
+            'Maximum allowed file size in bytes for conversion to data URL (default: 10MB). Increase only when your client can safely handle large payloads.'
+          )
+          .optional(),
+        mimeType: z
+          .string()
+          .describe(
+            'Optional MIME type override for the data URL. If omitted, mime type is read from Graph metadata.'
+          )
+          .optional(),
+      };
+
+      server.tool(
+        'get-file-data-url',
+        'Return a OneDrive or SharePoint file as a data URL (base64). Useful for small files that must be embedded inline.',
+        dataUrlParamSchema,
+        {
+          title: 'get-file-data-url',
+          readOnlyHint: true,
+        },
+        async ({ driveId, driveItemId, maxBytes = 10 * 1024 * 1024, mimeType }) => {
+          try {
+            const encodedDriveId = encodeURIComponent(driveId);
+            const encodedDriveItemId = encodeURIComponent(driveItemId);
+
+            const metadataEndpoint = `/drives/${encodedDriveId}/items/${encodedDriveItemId}`;
+            const metadata = (await graphClient.makeRequest(metadataEndpoint, {
+              method: 'GET',
+            })) as {
+              size?: number;
+              file?: { mimeType?: string };
+              name?: string;
+            };
+
+            if (typeof metadata?.size === 'number' && metadata.size > maxBytes) {
+              throw new Error(
+                `File is too large for data URL conversion (${metadata.size} bytes). Increase maxBytes or use download-onedrive-file-content.`
+              );
+            }
+
+            const contentEndpoint = `/drives/${encodedDriveId}/items/${encodedDriveItemId}/content`;
+            const binary = await graphClient.downloadBinary(contentEndpoint, { method: 'GET' });
+
+            if (binary.length > maxBytes) {
+              throw new Error(
+                `File exceeds maxBytes after download (${binary.length} bytes). Increase maxBytes or use download-onedrive-file-content.`
+              );
+            }
+
+            const resolvedMimeType =
+              mimeType?.trim() || metadata?.file?.mimeType || 'application/octet-stream';
+            const dataUrl = `data:${resolvedMimeType};base64,${binary.toString('base64')}`;
+
+            const result: Record<string, unknown> = {
+              driveId,
+              driveItemId,
+              name: metadata?.name,
+              mimeType: resolvedMimeType,
+              size: binary.length,
+              dataUrl,
+            };
+
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(result),
+                },
+              ],
+              structuredContent: result,
+            };
+          } catch (error) {
+            const message = `Failed to build data URL: ${(error as Error).message}`;
+            logger.error(message);
+            const structuredError: Record<string, unknown> = { error: message };
+            return {
+              content: [
+                {
+                  type: 'text',
+                  text: JSON.stringify(structuredError),
+                },
+              ],
+              isError: true,
+              structuredContent: structuredError,
+            };
+          }
+        }
+      );
+
+      registeredCount++;
+    } catch (error) {
+      logger.error(`Failed to register custom tool get-file-data-url: ${(error as Error).message}`);
+      failedCount++;
+    }
   }
 
   if (multiAccount) {

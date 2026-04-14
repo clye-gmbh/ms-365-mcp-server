@@ -180,7 +180,7 @@ update-mail-folder, delete-mail-folder</sub>
 update-calendar-event, delete-calendar-event</sub>
 
 **OneDrive Files**  
-<sub>list-drives, get-drive-root-item, list-folder-files, download-onedrive-file-content, upload-file-content,
+<sub>list-drives, get-drive-root-item, list-folder-files, download-onedrive-file-content, get-file-data-url, upload-file-content,
 delete-onedrive-file</sub>
 
 **Excel Operations**  

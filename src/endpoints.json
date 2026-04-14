@@ -388,6 +388,13 @@
     "llmTip": "Returns a temporary download URL, NOT the file content directly."
   },
   {
+    "pathPattern": "/drives/{drive-id}/items/{driveItem-id}/content",
+    "method": "get",
+    "toolName": "get-file-data-url",
+    "scopes": ["Files.Read"],
+    "llmTip": "Returns file content as a base64 data URL. Intended for small files only due to payload size."
+  },
+  {
     "pathPattern": "/drives/{drive-id}/items/{driveItem-id}",
     "method": "delete",
     "toolName": "delete-onedrive-file",
