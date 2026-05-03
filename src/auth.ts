@@ -8,6 +8,18 @@ import { getClientCredentialsAccessToken } from './lib/microsoft-auth.js';
 import { getSecrets, type AppSecrets } from './secrets.js';
 import { getCloudEndpoints, getDefaultClientId, type CloudType } from './cloud-config.js';
 
+/**
+ * Human-readable message included in every "not authenticated" error.
+ * It is intentionally instructional so that an LLM can act on it immediately
+ * by calling the `login` tool before retrying the original request.
+ */
+export const AUTH_REQUIRED_MESSAGE =
+  'Not authenticated with Microsoft 365. ' +
+  'To fix this, call the "login" tool which will start a device-code flow: ' +
+  '(1) call the "login" tool, (2) open https://microsoft.com/devicelogin, ' +
+  '(3) enter the code shown in the response, (4) complete sign-in, ' +
+  'then retry the original request.';
+
 // Ok so this is a hack to lazily import keytar only when needed
 // since --http mode may not need it at all, and keytar can be a pain to install (looking at you alpine)
 let keytar: typeof import('keytar') | null = null;
@@ -464,11 +476,11 @@ class AuthManager {
         return this.accessToken;
       } catch {
         logger.error('Silent token acquisition failed');
-        throw new Error('Silent token acquisition failed');
+        throw new Error(`Silent token acquisition failed. ${AUTH_REQUIRED_MESSAGE}`);
       }
     }
 
-    throw new Error('No valid token found');
+    throw new Error(`No valid token found. ${AUTH_REQUIRED_MESSAGE}`);
   }
 
   async getCurrentAccount(): Promise<AccountInfo | null> {
@@ -722,7 +734,7 @@ class AuthManager {
     const accounts = await this.msalApp.getTokenCache().getAllAccounts();
 
     if (accounts.length === 0) {
-      throw new Error('No accounts found. Please login first.');
+      throw new Error(`No accounts found. ${AUTH_REQUIRED_MESSAGE}`);
     }
 
     const lowerIdentifier = identifier.toLowerCase();
@@ -779,7 +791,9 @@ class AuthManager {
     if (this.isClientCredentialsMode) {
       const token = await this.getToken();
       if (!token) {
-        throw new Error('No valid token found for client credentials mode.');
+        throw new Error(
+          `No valid token found for client credentials mode. ${AUTH_REQUIRED_MESSAGE}`
+        );
       }
       return token;
     }
@@ -793,7 +807,7 @@ class AuthManager {
       const accounts = await this.msalApp.getTokenCache().getAllAccounts();
 
       if (accounts.length === 0) {
-        throw new Error('No accounts found. Please login first.');
+        throw new Error(`No accounts found. ${AUTH_REQUIRED_MESSAGE}`);
       }
       // No identifier provided
       if (accounts.length === 1) {
@@ -830,7 +844,7 @@ class AuthManager {
     } catch {
       throw new Error(
         `Failed to acquire token for account '${targetAccount.username || targetAccount.name || 'unknown'}'. ` +
-          `The token may have expired. Please re-login with: --login`
+          `The token may have expired. ${AUTH_REQUIRED_MESSAGE}`
       );
     }
   }

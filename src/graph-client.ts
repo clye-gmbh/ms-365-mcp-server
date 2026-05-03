@@ -1,5 +1,5 @@
 import logger from './logger.js';
-import AuthManager from './auth.js';
+import AuthManager, { AUTH_REQUIRED_MESSAGE } from './auth.js';
 import { refreshAccessToken } from './lib/microsoft-auth.js';
 import { encode as toonEncode } from '@toon-format/toon';
 import type { AppSecrets } from './secrets.js';
@@ -63,7 +63,7 @@ class GraphClient {
     const refreshToken = options.refreshToken ?? contextTokens?.refreshToken;
 
     if (!accessToken) {
-      throw new Error('No access token available');
+      throw new Error(`No access token available. ${AUTH_REQUIRED_MESSAGE}`);
     }
 
     try {
@@ -141,7 +141,7 @@ class GraphClient {
     let refreshToken = options.refreshToken ?? contextTokens?.refreshToken;
 
     if (!accessToken) {
-      throw new Error('No access token available');
+      throw new Error(`No access token available. ${AUTH_REQUIRED_MESSAGE}`);
     }
 
     try {
