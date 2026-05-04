@@ -16,8 +16,8 @@ import { getCloudEndpoints, getDefaultClientId, type CloudType } from './cloud-c
 export const AUTH_REQUIRED_MESSAGE =
   'Not authenticated with Microsoft 365. ' +
   'To fix this, call the "login" tool which will start a device-code flow: ' +
-  '(1) call the "login" tool, (2) open https://microsoft.com/devicelogin, ' +
-  '(3) enter the code shown in the response, (4) complete sign-in, ' +
+  '(1) call the "login" tool, (2) prompt user to open https://microsoft.com/devicelogin, ' +
+  '(3) and enter the code shown in the response, (4) then complete sign-in, ' +
   'then retry the original request.';
 
 // Ok so this is a hack to lazily import keytar only when needed
