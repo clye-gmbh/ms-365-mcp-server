@@ -65,7 +65,7 @@ class MicrosoftGraphServer {
 
   private createMcpServer(): McpServer {
     const server = new McpServer({
-      name: 'Microsoft365MCP',
+      name: 'ms-365',
       version: this.version,
     });
 
