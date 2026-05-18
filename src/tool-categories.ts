@@ -85,6 +85,37 @@ export function getCombinedPresetPattern(presets: string[]): string {
   return patterns.join('|');
 }
 
+/**
+ * Lenient version of getCombinedPresetPattern for use with per-request URL params.
+ * Unknown names are dropped (with a warning via the provided logger) instead of throwing.
+ * Returns undefined if no valid presets remain — caller should treat that as "no filter".
+ */
+export function resolveFeaturesToPattern(
+  features: string[],
+  warn?: (msg: string) => void
+): string | undefined {
+  const validPatterns: string[] = [];
+  const unknown: string[] = [];
+
+  for (const name of features) {
+    const category = TOOL_CATEGORIES[name];
+    if (category) {
+      validPatterns.push(category.pattern.source);
+    } else {
+      unknown.push(name);
+    }
+  }
+
+  if (unknown.length && warn) {
+    warn(
+      `Unknown feature(s) ignored: ${unknown.join(', ')}. ` +
+        `Known features: ${Object.keys(TOOL_CATEGORIES).join(', ')}`
+    );
+  }
+
+  return validPatterns.length ? validPatterns.join('|') : undefined;
+}
+
 export function listPresets(): Array<{
   name: string;
   description: string;

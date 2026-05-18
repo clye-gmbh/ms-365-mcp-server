@@ -18,6 +18,7 @@ import type { CommandOptions } from './cli.ts';
 import { getSecrets, type AppSecrets } from './secrets.js';
 import { getCloudEndpoints } from './cloud-config.js';
 import { requestContext } from './request-context.js';
+import { resolveFeaturesToPattern } from './tool-categories.js';
 //fix
 /**
  * Parse HTTP option into host and port components.
@@ -63,7 +64,7 @@ class MicrosoftGraphServer {
     this.secrets = null;
   }
 
-  private createMcpServer(): McpServer {
+  private createMcpServer(opts?: { enabledToolsOverride?: string }): McpServer {
     const server = new McpServer({
       name: 'Microsoft365MCP',
       version: this.version,
@@ -73,6 +74,9 @@ class MicrosoftGraphServer {
     if (shouldRegisterAuthTools) {
       registerAuthTools(server, this.authManager);
     }
+
+    // Per-request ?features= override wins over the process-wide --enabled-tools flag.
+    const enabledTools = opts?.enabledToolsOverride ?? this.options.enabledTools;
 
     if (this.options.discovery) {
       registerDiscoveryTools(
@@ -88,7 +92,7 @@ class MicrosoftGraphServer {
         server,
         this.graphClient!,
         this.options.readOnly,
-        this.options.enabledTools,
+        enabledTools,
         this.options.orgMode,
         this.authManager,
         this.multiAccount,
@@ -379,6 +383,25 @@ class MicrosoftGraphServer {
         })
       );
 
+      // Parse ?features=mail,calendar from the /mcp request URL into a tool-name
+      // regex. Unknown feature names are logged and dropped. Missing/empty param
+      // returns undefined, which means "no override — use the process-wide flag".
+      const parseFeaturesOverride = (reqUrl: string): string | undefined => {
+        try {
+          const parsed = new URL(reqUrl, 'http://placeholder');
+          const raw = parsed.searchParams.get('features');
+          if (!raw) return undefined;
+          const features = raw
+            .split(',')
+            .map((s) => s.trim())
+            .filter(Boolean);
+          if (!features.length) return undefined;
+          return resolveFeaturesToPattern(features, (msg) => logger.warn(msg));
+        } catch {
+          return undefined;
+        }
+      };
+
       // Microsoft Graph MCP endpoints with bearer token auth
       // Handle both GET and POST methods as required by MCP Streamable HTTP specification
       app.get(
@@ -388,8 +411,9 @@ class MicrosoftGraphServer {
           req: Request & { microsoftAuth?: { accessToken: string; refreshToken: string } },
           res: Response
         ) => {
+          const enabledToolsOverride = parseFeaturesOverride(req.url);
           const handler = async () => {
-            const server = this.createMcpServer();
+            const server = this.createMcpServer({ enabledToolsOverride });
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: undefined, // Stateless mode
             });
@@ -438,8 +462,9 @@ class MicrosoftGraphServer {
           req: Request & { microsoftAuth?: { accessToken: string; refreshToken: string } },
           res: Response
         ) => {
+          const enabledToolsOverride = parseFeaturesOverride(req.url);
           const handler = async () => {
-            const server = this.createMcpServer();
+            const server = this.createMcpServer({ enabledToolsOverride });
             const transport = new StreamableHTTPServerTransport({
               sessionIdGenerator: undefined, // Stateless mode
             });
@@ -481,9 +506,93 @@ class MicrosoftGraphServer {
         }
       );
 
-      // Health check endpoint
+      // Landing page 
       app.get('/', (req, res) => {
-        res.send('Microsoft 365 MCP Server is running');
+        const protocol = req.secure ? 'https' : 'http';
+        const origin = `${protocol}://${req.get('host')}`;
+        res.type('html').send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Clye Microsoft 365 MCP Server</title>
+    <meta name="robots" content="noindex" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #0b0d10;
+        --surface: #14181d;
+        --border: #232a32;
+        --text: #e7ecf1;
+        --muted: #98a4b3;
+        --accent: #6aa6ff;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f7f8fa;
+          --surface: #ffffff;
+          --border: #e3e7ec;
+          --text: #14181d;
+          --muted: #5a6573;
+          --accent: #2563eb;
+        }
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; background: var(--bg); color: var(--text); font: 15px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; }
+      main { max-width: 640px; margin: 0 auto; padding: 64px 24px; }
+      h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+      .tag { color: var(--muted); font-size: 13px; margin: 0 0 32px; }
+      .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; margin-bottom: 16px; }
+      .card h2 { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+      code { font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(127, 127, 127, 0.12); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+      pre { margin: 0; padding: 0; }
+      p { margin: 0 0 10px; }
+      p:last-child { margin-bottom: 0; }
+      .muted { color: var(--muted); }
+      .row { display: flex; align-items: center; gap: 8px; }
+      .dot { width: 8px; height: 8px; border-radius: 50%; background: #2ecc71; display: inline-block; }
+      a { color: var(--accent); text-decoration: none; }
+      a:hover { text-decoration: underline; }
+      footer { color: var(--muted); font-size: 12px; margin-top: 32px; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Clye Microsoft 365 MCP Server</h1>
+      <p class="tag">A Model Context Protocol bridge to Microsoft Graph.</p>
+
+      <div class="card">
+        <h2>Status</h2>
+        <p class="row"><span class="dot"></span><span>Server is running.</span></p>
+      </div>
+
+      <div class="card">
+        <h2>Connecting from an MCP client</h2>
+        <p>Add this URL as a remote MCP server in your AI Hub or other MCP-compatible client:</p>
+        <p><code>${origin}/mcp</code></p>
+        <p class="muted">The client will be guided through Microsoft sign-in automatically. No credentials are stored on this server.</p>
+      </div>
+
+      <div class="card">
+        <h2>OAuth discovery</h2>
+        <p><code>${origin}/.well-known/oauth-authorization-server</code></p>
+        <p><code>${origin}/.well-known/oauth-protected-resource</code></p>
+      </div>
+
+      <footer>If you reached this page by accident, you can safely close it.</footer>
+    </main>
+  </body>
+</html>`);
+      });
+
+
+      app.get(/.*/, (req, res) => {
+        const wantsHtml = (req.headers.accept || '').includes('text/html');
+        if (wantsHtml) {
+          res.redirect(302, '/');
+          return;
+        }
+        res.status(404).json({ error: 'not_found', path: req.path });
       });
 
       if (host) {

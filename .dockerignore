@@ -1,0 +1,50 @@
+# Secrets — must never enter the build context
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Local credential caches (stdio mode artifacts)
+.token-cache.json
+.selected-account.json
+
+# Source control
+.git
+.gitignore
+.gitattributes
+
+# Dependencies (re-installed inside the image)
+node_modules
+
+# Build output (regenerated inside the image)
+dist
+src/generated
+openapi
+
+# Tests & coverage
+coverage
+**/__tests__
+**/*.test.ts
+**/*.spec.ts
+vitest.config.js
+
+# IDE / OS noise
+.vscode
+.idea
+.DS_Store
+*.swp
+
+# Docs & meta (not needed at runtime)
+README.md
+SECURITY.md
+SHAREPOINT-FILES.md
+LICENSE
+.github
+
+# Misc
+npm-debug.log*
+*.tsbuildinfo
+test-calendar-fix.js
+test-real-calendar.js
+remove-recursive-refs.js

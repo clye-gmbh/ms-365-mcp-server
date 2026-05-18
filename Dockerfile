@@ -1,22 +1,32 @@
-FROM node:24-alpine AS builder
+# syntax=docker/dockerfile:1.7
+FROM node:22-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
-RUN npm i
+COPY package.json package-lock.json ./
+RUN npm ci
 
 COPY . .
-RUN npm run generate
-RUN npm run build
+RUN npm run generate && npm run build
 
-FROM node:20-alpine AS release
+FROM node:22-alpine AS release
 
 WORKDIR /app
 
-COPY --from=builder /app/dist /app/dist
-COPY --from=builder /app/package*.json ./
+ENV NODE_ENV=production \
+    PORT=3000
 
-ENV NODE_ENV=production
-RUN npm i --ignore-scripts --omit=dev
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --ignore-scripts
+
+COPY --from=builder /app/dist ./dist
+
+USER node
+
+EXPOSE 3000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget --quiet --spider --tries=1 "http://127.0.0.1:${PORT}/" || exit 1
 
 ENTRYPOINT ["node", "dist/index.js"]
+CMD ["--http", "0.0.0.0:3000"]
